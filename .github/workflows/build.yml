@@ -1,0 +1,181 @@
+name: Build AnWindMusic APK
+
+# ============================================================================
+# 仅手动触发，不绑定 push / pull_request / schedule 等任何自动触发器
+# 使用方法：GitHub 仓库 → Actions 标签页 → 选择 "Build AnWindMusic APK"
+#           → Run workflow → 选择构建类型 → 运行
+# ============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: "构建类型"
+        required: true
+        type: choice
+        default: "release"
+        options:
+          - release
+          - debug
+          - both
+      java_version:
+        description: "JDK 版本"
+        required: true
+        type: choice
+        default: "17"
+        options:
+          - "17"
+          - "21"
+      gradle_version:
+        description: "Gradle 版本（覆盖 wrapper）"
+        required: false
+        type: string
+        default: "8.7"
+      upload_apk:
+        description: "上传 APK 作为 Actions artifact"
+        required: true
+        type: boolean
+        default: true
+
+# 同一构建类型的新构建不取消旧构建（保持行为可预期）
+concurrency:
+  group: build-${{ github.ref }}-${{ github.event.inputs.build_type }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build APK (${{ github.event.inputs.build_type }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ============ 1. 检出代码 ============
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ============ 2. 设置 JDK ============
+      - name: ☕ Set up JDK ${{ github.event.inputs.java_version }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ github.event.inputs.java_version }}
+
+      # ============ 3. 设置 Gradle ============
+      # 使用 setup-gradle 而非依赖 gradlew，规避 gradle-wrapper.jar 缺失问题；
+      # ubuntu-latest 镜像已预装 Android SDK 34 + build-tools，无需另装 SDK
+      - name: 🛠️ Set up Gradle ${{ github.event.inputs.gradle_version }}
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: ${{ github.event.inputs.gradle_version }}
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      # ============ 4. 检查 gradle-wrapper.jar ============
+      # 缺失时用已安装的 Gradle 自动生成（首次推送仓库常见）
+      - name: 🔧 Ensure gradle-wrapper.jar exists
+        run: |
+          if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
+            echo "⚠️  gradle-wrapper.jar not found, generating it with: gradle wrapper"
+            gradle wrapper --gradle-version ${{ github.event.inputs.gradle_version }} --distribution-type bin
+            echo "✅ Wrapper generated"
+          else
+            echo "✅ gradle-wrapper.jar already exists"
+          fi
+          ls -lh gradle/wrapper/
+
+      # ============ 5. 生成 release keystore ============
+      # 关键：debug 签名签的 release APK 会被标记 testOnly=true，
+      # Android 14 系统安装器拒绝安装（必须 adb install -t）。
+      # 这里生成一个真正的 release keystore，让 APK 带标准 V1+V2+V3 签名，
+      # 任何 Android 设备都能直接点击安装。
+      # （如需固定签名，可把 keystore 放进仓库或改用 Secrets，见 README）
+      - name: 🔑 Generate release keystore
+        run: |
+          keytool -genkeypair -v \
+            -keystore anwindmusic-release.keystore \
+            -alias anwindmusic \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass anwindmusic-release-pass \
+            -keypass anwindmusic-release-pass \
+            -dname "CN=AnWindMusic, OU=Dev, O=AnWind, L=Beijing, ST=Beijing, C=CN"
+          echo "✅ Release keystore generated"
+          ls -lh anwindmusic-release.keystore
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/anwindmusic-release.keystore
+          KEYSTORE_PASS: anwindmusic-release-pass
+          KEY_ALIAS: anwindmusic
+          KEY_PASS: anwindmusic-release-pass
+
+      # ============ 6. 校验项目结构 ============
+      - name: 🔍 Validate project structure
+        run: |
+          echo "=== Gradle files ==="
+          find . -maxdepth 3 -name "*.gradle.kts" -o -name "gradle-wrapper.properties" | sort
+          echo "=== AndroidManifest ==="
+          test -f app/src/main/AndroidManifest.xml && echo "✓ Manifest found" || (echo "✗ Manifest missing" && exit 1)
+          echo "=== Source files count ==="
+          find app/src/main/java -name "*.kt" | wc -l
+          echo "Kotlin files"
+
+      # ============ 7. 写入 local.properties（SDK 路径） ============
+      - name: 📝 Write local.properties
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          echo "✓ local.properties written"
+          cat local.properties
+
+      # ============ 8. 编译 ============
+      - name: 🏗️ Build APK (${{ github.event.inputs.build_type }})
+        run: |
+          case "${{ github.event.inputs.build_type }}" in
+            debug)   TASKS="assembleDebug" ;;
+            release) TASKS="assembleRelease" ;;
+            both)    TASKS="assembleDebug assembleRelease" ;;
+          esac
+          echo "Running: gradle $TASKS"
+          gradle $TASKS --no-daemon --stacktrace
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/anwindmusic-release.keystore
+          KEYSTORE_PASS: anwindmusic-release-pass
+          KEY_ALIAS: anwindmusic
+          KEY_PASS: anwindmusic-release-pass
+
+      # ============ 9. 整理产物 ============
+      - name: 📦 Collect APKs
+        run: |
+          mkdir -p apk-output
+          VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts || echo "1.0.0")
+          echo "App version: $VERSION"
+          find app/build/outputs/apk -name "*.apk" -type f | while read -r apk; do
+            variant=$(echo "$apk" | grep -oP 'apk/\K[a-zA-Z]+(?=/)')
+            base=$(basename "$apk")
+            newname="AnWindMusic-v${VERSION}-${variant}-${base}"
+            cp "$apk" "apk-output/$newname"
+            echo "Copied: $newname"
+          done
+          ls -lh apk-output/
+
+      # ============ 10. 上传 artifact ============
+      - name: 📤 Upload APK artifacts
+        if: ${{ github.event.inputs.upload_apk == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnWindMusic-APKs-${{ github.event.inputs.build_type }}-${{ github.run_number }}
+          path: apk-output/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      # ============ 11. 构建信息 ============
+      - name: ℹ️ Build summary
+        run: |
+          echo "## 🎵 AnWindMusic 构建完成" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **构建类型**: ${{ github.event.inputs.build_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **JDK**: ${{ github.event.inputs.java_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **包名**: com.anwindmusic" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "APK 已上传到 Actions Artifacts，在本页顶部 Artifacts 区域下载。" >> $GITHUB_STEP_SUMMARY
+          ls -lh apk-output/
