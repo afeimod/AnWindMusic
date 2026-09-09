@@ -1,7 +1,10 @@
 package com.anwindmusic.music
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.MediaMetadataRetriever
+import android.net.Uri
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -48,13 +51,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.anwindmusic.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -137,21 +144,25 @@ object CoverCache {
     }
 }
 
-/** 网络加载位图，超限降采样到 600px 内 */
+/**
+ * 网络加载位图，超限降采样到 maxPx 内；
+ * 同时支持本地磁盘路径（内嵌封面缓存 / 自定义背景图等），非 http 一律按文件读。
+ */
 suspend fun loadBitmap(url: String, maxPx: Int = 600): Bitmap? = withContext(Dispatchers.IO) {
     runCatching {
-        val conn = URL(url).openConnection() as HttpURLConnection
-        try {
-            conn.connectTimeout = 10_000
-            conn.readTimeout = 15_000
-            conn.instanceFollowRedirects = true
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-            if (conn.responseCode !in 200..299) return@runCatching null
-            val bmp = BitmapFactory.decodeStream(conn.inputStream, null, BitmapFactory.Options())
-                ?: return@runCatching null
-            val longest = maxOf(bmp.width, bmp.height)
-            if (longest > maxPx) {
-                val scale = maxPx.toFloat() / longest
+        if (!url.startsWith("http")) {
+            // 本地文件：直接解码 + 降采样
+            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(url, opts)
+            var sample = 1
+            val longest = maxOf(opts.outWidth, opts.outHeight)
+            while (longest / sample > maxPx * 2) sample *= 2
+            val bmp = BitmapFactory.decodeFile(
+                url, BitmapFactory.Options().apply { inSampleSize = sample }
+            ) ?: return@runCatching null
+            val l = maxOf(bmp.width, bmp.height)
+            if (l > maxPx) {
+                val scale = maxPx.toFloat() / l
                 Bitmap.createScaledBitmap(
                     bmp,
                     (bmp.width * scale).toInt().coerceAtLeast(1),
@@ -161,15 +172,103 @@ suspend fun loadBitmap(url: String, maxPx: Int = 600): Bitmap? = withContext(Dis
             } else {
                 bmp
             }
-        } finally {
-            conn.disconnect()
+        } else {
+            val conn = URL(url).openConnection() as HttpURLConnection
+            try {
+                conn.connectTimeout = 10_000
+                conn.readTimeout = 15_000
+                conn.instanceFollowRedirects = true
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                if (conn.responseCode !in 200..299) return@runCatching null
+                val bmp = BitmapFactory.decodeStream(conn.inputStream, null, BitmapFactory.Options())
+                    ?: return@runCatching null
+                val longest = maxOf(bmp.width, bmp.height)
+                if (longest > maxPx) {
+                    val scale = maxPx.toFloat() / longest
+                    Bitmap.createScaledBitmap(
+                        bmp,
+                        (bmp.width * scale).toInt().coerceAtLeast(1),
+                        (bmp.height * scale).toInt().coerceAtLeast(1),
+                        true
+                    )
+                } else {
+                    bmp
+                }
+            } finally {
+                conn.disconnect()
+            }
         }
     }.getOrNull()
 }
 
+// ==================== 本地歌曲内嵌封面（独立版新增） ====================
+
 /**
- * 异步封面组件：有图显示封面（Crop 裁剪），无图/加载中显示深色渐变 + 音符占位。
- * @param decorative 为 true 时不画占位音符（歌词页背景用，避免大图标）
+ * 本地歌曲封面解析：从音频文件提取内嵌封面图（MediaMetadataRetriever），
+ * 磁盘缓存（filesDir/music_covers，key 命名）+ 内存失败表避免反复提取。
+ * 在线歌曲直接用网络封面 URL；本地歌无内嵌封面时返回空串（UI 显示默认封面）。
+ */
+object LocalCover {
+    private val failed = HashSet<String>()
+    private val lock = Any()
+
+    /** 封面源解析（IO 线程）：http URL 或本地缓存文件路径；无封面返回 "" */
+    suspend fun sourceFor(context: Context, song: SongInfo?): String = withContext(Dispatchers.IO) {
+        if (song == null) return@withContext ""
+        // 在线歌（含已下载）优先网络封面
+        if (!song.isLocal && song.picUrl.isNotBlank()) return@withContext song.picUrl
+        // 本地歌 / 无网络封面的歌：内嵌封面（磁盘缓存命中或新提取）
+        extractCached(context, song) ?: ""
+    }
+
+    /** 提取内嵌封面并写缓存；命中缓存直接返回；无内嵌封面返回 null */
+    fun extractCached(context: Context, song: SongInfo): String? {
+        val file = cacheFile(context, song)
+        if (file.isFile && file.length() > 0) return file.absolutePath
+        synchronized(lock) { if (failed.contains(song.key)) return null }
+
+        val picture = runCatching {
+            val mmr = MediaMetadataRetriever()
+            try {
+                val direct = song.localPath
+                val fromDownload = song.downloadedPath
+                val hasSource = when {
+                    !direct.isNullOrBlank() && File(direct).isFile -> {
+                        mmr.setDataSource(direct); true
+                    }
+                    !fromDownload.isNullOrBlank() && File(fromDownload).isFile -> {
+                        mmr.setDataSource(fromDownload); true
+                    }
+                    !song.localUri.isNullOrBlank() -> {
+                        // content://（MediaStore）与 file:// 均支持
+                        mmr.setDataSource(context, Uri.parse(song.localUri)); true
+                    }
+                    else -> false
+                }
+                if (hasSource) mmr.embeddedPicture else null
+            } finally {
+                runCatching { mmr.release() }
+            }
+        }.getOrNull()
+
+        if (picture == null || picture.isEmpty()) {
+            synchronized(lock) { failed.add(song.key) }
+            return null
+        }
+        return runCatching {
+            file.parentFile?.mkdirs()
+            file.writeBytes(picture)
+            file.absolutePath
+        }.getOrNull()
+    }
+
+    private fun cacheFile(context: Context, song: SongInfo): File =
+        File(File(context.filesDir, "music_covers"), Integer.toHexString(song.key.hashCode()) + ".img")
+}
+
+/**
+ * 异步封面组件（URL 版）：有图显示封面（Crop 裁剪），无图/加载中显示默认封面图。
+ * @param decorative 为 true 时同样显示默认封面（歌词页背景用，视觉一致）
  */
 @Composable
 fun AsyncCover(
@@ -198,22 +297,37 @@ fun AsyncCover(
             contentScale = ContentScale.Crop
         )
     } else {
-        Box(
-            modifier = modifier.background(
-                Brush.linearGradient(listOf(Color(0xFF2E2E38), Color(0xFF3D3D4A)))
-            ),
-            contentAlignment = Alignment.Center
-        ) {
-            if (!decorative) {
-                Icon(
-                    imageVector = Icons.Filled.MusicNote,
-                    contentDescription = null,
-                    tint = Color(0xFF71717E),
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-        }
+        // 默认封面：极简深蓝渐变 + 音符（本地无内嵌封面 / 在线图未加载时）
+        Image(
+            painter = painterResource(R.drawable.default_cover),
+            contentDescription = null,
+            modifier = modifier,
+            contentScale = ContentScale.Crop
+        )
     }
+}
+
+/**
+ * 异步封面组件（歌曲版，独立版新增）：自动解析在线网络封面 / 本地内嵌封面，
+ * 无封面时回落默认封面。列表行 / 播放条 / 歌词页封面与光盘统一走此入口。
+ */
+@Composable
+fun AsyncCover(
+    song: SongInfo?,
+    modifier: Modifier = Modifier,
+    decorative: Boolean = false
+) {
+    val context = LocalContext.current
+    // 初始值：在线歌直接用网络 URL 秒出图；本地歌先显示默认封面再异步替换
+    var src by remember(song?.key) {
+        mutableStateOf(
+            if (song != null && !song.isLocal && song.picUrl.isNotBlank()) song.picUrl else ""
+        )
+    }
+    LaunchedEffect(song?.key, song?.localPath, song?.downloadedPath) {
+        src = LocalCover.sourceFor(context, song)
+    }
+    AsyncCover(url = src, modifier = modifier, decorative = decorative)
 }
 
 // ==================== 均衡器动画 ====================
@@ -283,7 +397,7 @@ fun McSearchField(
             if (query.isEmpty()) {
                 Text(
                     text = hint,
-                    color = Color(0xFFB9B9C0),
+                    color = Mc.textTertiary,
                     fontSize = 13.sp,
                     maxLines = 1
                 )

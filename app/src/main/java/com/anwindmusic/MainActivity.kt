@@ -13,7 +13,6 @@ import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.lightColorScheme
@@ -35,7 +34,7 @@ import kotlinx.coroutines.withContext
 /**
  * AnWindMusic —— AnWind 云音乐独立版入口 Activity：
  * - 承载 MusicContent（纯 Compose 手机布局）
- * - 系统照片选择器（Photo Picker）/ 文件夹选择器（结果经 PickBus 回传播放器）
+ * - 系统文件管理器选图（DocumentsUI 分类界面）/ 文件夹选择器（结果经 PickBus 回传播放器）
  * - 运行时权限：音频读取（本地扫描）+ 通知（Android 13+）
  * - 默认全屏 edge-to-edge：内容延伸到状态栏/导航栏后面，占用刘海区域；
  *   交互控件经 insets 避让，不被系统栏/虚拟按键遮挡
@@ -49,10 +48,10 @@ class MainActivity : ComponentActivity() {
     /** 沉浸式全屏状态（歌词页用；manifest 已锁 configChanges 避免旋转重建丢失） */
     private var fullscreen by mutableStateOf(false)
 
-    /** 系统照片选择器（Photo Picker）：带「照片/相册」分类网格，直观选图；
-     *  无需存储权限；设备不支持时自动回退文档选择器 */
+    /** 系统文件管理器选图（DocumentsUI，ACTION_OPEN_DOCUMENT）：
+     *  带最近/图片/视频/相册等分类侧栏，直观选图；结果复制到私有目录无授权过期问题 */
     private val imagePicker =
-        registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             val kind = pendingPickKind
             pendingPickKind = null
             if (uri == null || kind == null) return@registerForActivityResult
@@ -98,9 +97,7 @@ class MainActivity : ComponentActivity() {
                     onPickImage = { kind ->
                         pendingPickKind = kind
                         runCatching {
-                            imagePicker.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                            )
+                            imagePicker.launch(arrayOf("image/*"))
                         }.onFailure {
                             Toast.makeText(this, "无法打开图片选择器", Toast.LENGTH_SHORT).show()
                             pendingPickKind = null

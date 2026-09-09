@@ -471,6 +471,18 @@ fun SettingsPage(
             )
         }
 
+        SettingsSection("屏幕方向") {
+            ModeChipsRow(
+                options = MusicSettings.ORIENTATION_LABELS.map { it.key to it.value },
+                selected = settings.orientation,
+                onSelect = { onChange(settings.copy(orientation = it)) }
+            )
+            Caption(
+                "自动 = 跟随系统旋转设置；竖屏/横屏锁定方向；自动旋转 = 无论系统设置如何均随重力感应旋转；" +
+                    "切换立即生效，界面状态不会被重建丢失"
+            )
+        }
+
         SettingsSection("关于") {
             Caption("音源：酷我（搜索 / 播放 / 下载） · 词源：酷我 / 网易云 / QQ 音乐 / LRCLIB")
             Caption("AnWind云音乐（独立版）v1.0.0 · 源自 AnWind 云音乐 · 3D 歌词秀 · 桌面歌词")
@@ -492,8 +504,8 @@ private fun SettingsSection(title: String, content: @Composable ColumnScope.() -
         color = Mc.textPrimary,
         modifier = Modifier.padding(start = 4.dp, bottom = 4.dp)
     )
-    // v2.21.5：自定义主页背景激活时区块卡片半透明融入（白 72%，同侧栏）
-    val cardBg = surfaceColor(Color.White, LocalHomeCustomBg.current, 0.72f)
+    // v2.21.5：自定义主页背景激活时区块卡片半透明融入；v1.1 降透至 55% 与顶/底栏一致
+    val cardBg = surfaceColor(Color.White, LocalHomeCustomBg.current, 0.55f)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -505,14 +517,14 @@ private fun SettingsSection(title: String, content: @Composable ColumnScope.() -
     }
 }
 
-/** 说明性小字 */
+/** 说明性小字（自定义背景下加深，保证半透明卡片上可读） */
 @Composable
 private fun Caption(text: String) {
     Text(
         text = text,
         fontSize = 10.sp,
         lineHeight = 15.sp,
-        color = Mc.textTertiary,
+        color = if (LocalHomeCustomBg.current) Mc.textSecondary else Mc.textTertiary,
         modifier = Modifier.padding(top = 8.dp, start = 4.dp)
     )
 }
@@ -525,14 +537,16 @@ private fun ModeChipsRow(
     onSelect: (Int) -> Unit
 ) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        // v2.21.5：自定义主页背景激活时未选中芯片半透明融入（选中态保持实心红保证对比）
-        val chipBg = surfaceColor(Mc.searchFieldBg, LocalHomeCustomBg.current, 0.60f)
+        // v2.21.5：自定义主页背景激活时未选中芯片半透明融入（选中态保持实心红保证对比）；
+        // 自定义背景下芯片降透至 42%，文字加深保证可读
+        val chipBg = surfaceColor(Mc.searchFieldBg, LocalHomeCustomBg.current, 0.42f)
+        val chipText = if (LocalHomeCustomBg.current) Mc.textPrimary else Mc.textSecondary
         for ((value, label) in options) {
             val isSel = value == selected
             Text(
                 text = label,
                 fontSize = 12.sp,
-                color = if (isSel) Color.White else Mc.textSecondary,
+                color = if (isSel) Color.White else chipText,
                 fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
                 modifier = Modifier
                     .clip(RoundedCornerShape(14.dp))
@@ -683,7 +697,7 @@ private fun SettingSlider(
                 thumbColor = Mc.red,
                 activeTrackColor = Mc.red,
                 // v2.21.5：未激活轨道随背景半透明（激活轨道保持实心红）
-                inactiveTrackColor = surfaceColor(Color(0xFFE5E5E8), LocalHomeCustomBg.current, 0.70f)
+                inactiveTrackColor = surfaceColor(Color(0xFFE5E5E8), LocalHomeCustomBg.current, 0.50f)
             ),
             modifier = Modifier
                 .weight(1f)
@@ -792,7 +806,7 @@ private fun DirRow(path: String, onRemove: () -> Unit) {
 private fun ManualDirInput(onAdd: (String) -> Unit) {
     var text by remember { mutableStateOf("") }
     // v2.21.5：自定义主页背景激活时输入框容器半透明融入
-    val fieldBg = surfaceColor(Mc.searchFieldBg, LocalHomeCustomBg.current, 0.60f)
+    val fieldBg = surfaceColor(Mc.searchFieldBg, LocalHomeCustomBg.current, 0.42f)
     Row(verticalAlignment = Alignment.CenterVertically) {
         TextField(
             value = text,

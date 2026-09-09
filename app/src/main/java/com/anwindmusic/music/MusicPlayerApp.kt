@@ -1,6 +1,7 @@
 package com.anwindmusic.music
 
 import android.app.Activity
+import android.content.pm.ActivityInfo
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -227,6 +228,17 @@ fun MusicContent(
                 c.isAppearanceLightNavigationBars = true
             }
         }
+    }
+
+    // ===== 屏幕方向（设置页「屏幕方向」即时生效；manifest 已锁 configChanges 不重建） =====
+    DisposableEffect(musicSettings.orientation) {
+        (context as? Activity)?.requestedOrientation = when (musicSettings.orientation) {
+            MusicSettings.ORIENTATION_PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            MusicSettings.ORIENTATION_LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            MusicSettings.ORIENTATION_SENSOR -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+            else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED   // 跟随系统
+        }
+        onDispose { }
     }
 
     DisposableEffect(Unit) {
@@ -593,7 +605,7 @@ private fun MusicTopBar(customBg: Boolean, onSettings: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .background(if (customBg) Color.White.copy(alpha = 0.72f) else Mc.sidebarBg)
+            .background(if (customBg) Color.White.copy(alpha = 0.55f) else Mc.sidebarBg)
             // 状态栏/刘海区域由本栏背景延伸填充（edge-to-edge），内容避让到状态栏下方
             .statusBarsPadding()
             .padding(horizontal = 14.dp, vertical = 8.dp),
@@ -626,7 +638,7 @@ private fun MusicTopBar(customBg: Boolean, onSettings: () -> Unit) {
         Icon(
             Icons.Filled.Settings,
             contentDescription = "设置",
-            tint = Mc.textSecondary,
+            tint = if (customBg) Mc.textPrimary else Mc.textSecondary,
             modifier = Modifier
                 .size(20.dp)
                 .clip(RoundedCornerShape(6.dp))
@@ -642,10 +654,10 @@ private fun MusicTopBar(customBg: Boolean, onSettings: () -> Unit) {
 private fun MusicBottomNav(page: Page, onPageChange: (Page) -> Unit, customBg: Boolean) {
     HorizontalDivider(
         thickness = 0.5.dp,
-        color = if (customBg) Color.White.copy(alpha = 0.6f) else Mc.divider
+        color = if (customBg) Color.White.copy(alpha = 0.45f) else Mc.divider
     )
     NavigationBar(
-        containerColor = if (customBg) Color.White.copy(alpha = 0.80f) else Color.White,
+        containerColor = if (customBg) Color.White.copy(alpha = 0.55f) else Color.White,
         tonalElevation = 0.dp
     ) {
         val items = listOf(
@@ -664,8 +676,9 @@ private fun MusicBottomNav(page: Page, onPageChange: (Page) -> Unit, customBg: B
                 colors = NavigationBarItemDefaults.colors(
                     selectedIconColor = Mc.red,
                     selectedTextColor = Mc.red,
-                    unselectedIconColor = Mc.textSecondary,
-                    unselectedTextColor = Mc.textSecondary,
+                    // 自定义背景下底栏更透：未选中图标/文字加深保证可读性
+                    unselectedIconColor = if (customBg) Mc.textPrimary else Mc.textSecondary,
+                    unselectedTextColor = if (customBg) Mc.textPrimary else Mc.textSecondary,
                     indicatorColor = Color(0x1AEC4141)
                 )
             )
@@ -691,8 +704,8 @@ private fun PlayerBarMobile(
     Column(
         Modifier
             .fillMaxWidth()
-            // 自定义主页背景时底栏半透明白，让背景全局透出
-            .background(if (customBg) Color.White.copy(alpha = 0.80f) else Color.White)
+            // 自定义主页背景时底栏半透明白（降透 55%），让背景全局透出
+            .background(if (customBg) Color.White.copy(alpha = 0.55f) else Color.White)
             .padding(top = 4.dp)
     ) {
         // 进度条（细线，红色）
@@ -750,7 +763,7 @@ private fun PlayerBarMobile(
                     .clip(RoundedCornerShape(5.dp))
                     .clickable(onClick = onToggleLyrics)
             ) {
-                AsyncCover(url = song?.picUrl, modifier = Modifier.size(40.dp))
+                AsyncCover(song = song, modifier = Modifier.size(40.dp))
             }
             Spacer(Modifier.width(10.dp))
             Column(

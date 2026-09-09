@@ -1,6 +1,7 @@
 package com.anwindmusic.music
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -83,6 +84,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.anwindmusic.R
 import com.anwindmusic.music.MusicStore as Store
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -129,6 +131,15 @@ fun Lyrics3DPage(
     // 组合期读取：背景模式等参与重组的设置（v2.19：所在作用域直读快照 State）
     val settings = settingsProvider()
 
+    // ===== 封面源解析（独立版新增）：在线网络封面 / 本地内嵌封面，无图回落默认封面 =====
+    val coverContext = LocalContext.current
+    var coverSrc by remember(song?.key) {
+        mutableStateOf(if (song != null && !song.isLocal && song.picUrl.isNotBlank()) song.picUrl else "")
+    }
+    LaunchedEffect(song?.key, song?.localPath, song?.downloadedPath) {
+        coverSrc = LocalCover.sourceFor(coverContext, song)
+    }
+
     Box(modifier.fillMaxSize().background(Mc.lyricBg)) {
         // ===== 背景（v2.18 可自定义）：封面模糊 / 纯色 / 渐变 / 自定义图片 =====
         when (settings.lyricBgMode) {
@@ -149,7 +160,7 @@ fun Lyrics3DPage(
             else -> {
                 // 封面模糊铺底（默认，对应图1）—— v2.20 模糊半径可调（0 = 清晰不模糊）
                 AsyncCover(
-                    url = song?.picUrl,
+                    url = coverSrc,
                     modifier = Modifier
                         .matchParentSize()
                         .then(
@@ -274,7 +285,7 @@ fun Lyrics3DPage(
                     contentAlignment = Alignment.Center
                 ) {
                     CoverWithDisc(
-                        coverUrl = song?.picUrl,
+                        coverUrl = coverSrc,
                         customCover = settings.coverImage,
                         customDisc = settings.discImage,
                         isPlaying = isPlaying
@@ -356,7 +367,7 @@ private fun CoverWithDisc(
         }
     }
 
-    // v2.21：盘面图优先级 —— 自定义光盘图片 > 自定义封面图片 > 歌曲专辑封面 > 银色回退
+    // v2.21：盘面图优先级 —— 自定义光盘图片 > 自定义封面图片 > 歌曲封面（在线网络/本地内嵌） > 默认封面
     // v2.20.3：与 AsyncCover 共用 CoverCache（同 URL 只下载一次）
     val context = LocalContext.current
     val discSrc = customDisc ?: customCover
@@ -365,7 +376,10 @@ private fun CoverWithDisc(
         if (!discSrc.isNullOrEmpty()) {
             discBmp = loadBackgroundBitmap(context, discSrc, 600)
         } else if (coverUrl.isNullOrEmpty()) {
-            discBmp = null
+            // 无任何封面：默认盘面用极简默认封面图（与占位封面/背景同图）
+            discBmp = runCatching {
+                BitmapFactory.decodeResource(context.resources, R.drawable.default_cover)
+            }.getOrNull()
         } else if (!CoverCache.isResolved(coverUrl)) {
             val loaded = loadBitmap(coverUrl)
             CoverCache.put(coverUrl, loaded)

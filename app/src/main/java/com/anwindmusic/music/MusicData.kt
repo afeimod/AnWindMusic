@@ -30,6 +30,8 @@ data class SongInfo(
     val source: String = SOURCE_KUWO,
     /** 本地歌曲的 content:// 或 file:// URI */
     val localUri: String? = null,
+    /** 本地歌曲的绝对路径（MediaStore DATA / 目录扫描），供内嵌封面提取与播放兜底 */
+    val localPath: String? = null,
     /** 已下载到本地的文件路径（下载完成后回填，仅在线歌有） */
     val downloadedPath: String? = null
 ) {
@@ -251,6 +253,9 @@ data class MusicSettings(
     val homeBgImage: String? = null,
     /** 自定义图片时的压暗系数 0..0.8 */
     val homeImageDim: Float = 0.25f,
+    // ---- 屏幕方向（独立版新增） ----
+    /** 0 跟随系统 / 1 竖屏 / 2 横屏 / 3 自动旋转（重力感应） */
+    val orientation: Int = ORIENTATION_AUTO,
     // ---- 本地扫描 ----
     val scanMode: Int = SCAN_ALL,
     /** 指定目录扫描的绝对路径列表 */
@@ -263,6 +268,19 @@ data class MusicSettings(
         const val BG_SOLID = 1      // 纯色
         const val BG_GRADIENT = 2   // 渐变预设
         const val BG_IMAGE = 3      // 自定义图片
+
+        // 屏幕方向
+        const val ORIENTATION_AUTO = 0          // 跟随系统
+        const val ORIENTATION_PORTRAIT = 1      // 锁定竖屏
+        const val ORIENTATION_LANDSCAPE = 2     // 锁定横屏
+        const val ORIENTATION_SENSOR = 3        // 自动旋转（重力感应）
+        /** 屏幕方向显示名（设置页用） */
+        val ORIENTATION_LABELS = linkedMapOf(
+            ORIENTATION_AUTO to "自动",
+            ORIENTATION_PORTRAIT to "竖屏",
+            ORIENTATION_LANDSCAPE to "横屏",
+            ORIENTATION_SENSOR to "自动旋转"
+        )
 
         // 主页背景模式
         const val HOME_BG_DEFAULT = 0
@@ -421,6 +439,7 @@ class MusicStore(private val context: Context) {
             homeBgGradient = o.optInt("homeBgGradient", 0),
             homeBgImage = o.optString("homeBgImage", "").takeIf { it.isNotEmpty() },
             homeImageDim = o.optDouble("homeImageDim", 0.25).toFloat().coerceIn(0f, 0.95f),
+            orientation = o.optInt("orientation", MusicSettings.ORIENTATION_AUTO).coerceIn(0, 3),
             scanMode = o.optInt("scanMode", MusicSettings.SCAN_ALL),
             scanDirs = dirs
         )
@@ -465,6 +484,7 @@ class MusicStore(private val context: Context) {
                     .put("homeBgGradient", s.homeBgGradient)
                     .put("homeBgImage", s.homeBgImage ?: "")
                     .put("homeImageDim", s.homeImageDim.toDouble())
+                    .put("orientation", s.orientation)
                     .put("scanMode", s.scanMode)
                     .put("scanDirs", dirs)
             )
@@ -577,6 +597,7 @@ class MusicStore(private val context: Context) {
             .put("picUrl", s.picUrl)
             .put("source", s.source)
             .put("localUri", s.localUri ?: "")
+            .put("localPath", s.localPath ?: "")
             .put("downloadedPath", s.downloadedPath ?: "")
 
     private fun songFromJson(o: JSONObject): SongInfo =
@@ -589,6 +610,7 @@ class MusicStore(private val context: Context) {
             picUrl = o.optString("picUrl", ""),
             source = o.optString("source", SongInfo.SOURCE_KUWO),
             localUri = o.optString("localUri", "").takeIf { it.isNotEmpty() },
+            localPath = o.optString("localPath", "").takeIf { it.isNotEmpty() },
             downloadedPath = o.optString("downloadedPath", "").takeIf { it.isNotEmpty() }
         )
 

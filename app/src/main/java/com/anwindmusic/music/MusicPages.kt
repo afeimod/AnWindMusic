@@ -2,6 +2,7 @@ package com.anwindmusic.music
 
 import android.content.ContentUris
 import android.content.Context
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.MediaStore
 import java.io.File
@@ -108,14 +109,19 @@ fun SearchPage(
                                 Box(
                                     Modifier
                                         .clip(RoundedCornerShape(14.dp))
-                                        .background(surfaceColor(Mc.hover, customBg, 0.60f))
+                                        .background(surfaceColor(Mc.hover, customBg, 0.42f))
                                         .clickable {
                                             onQueryChange(kw)
                                             onSearch(kw)
                                         }
                                         .padding(horizontal = 12.dp, vertical = 6.dp)
                                 ) {
-                                    Text(text = kw, fontSize = 12.sp, color = Mc.textSecondary)
+                                    // 自定义背景下表面更透：文字加深保证可读性
+                                    Text(
+                                        text = kw,
+                                        fontSize = 12.sp,
+                                        color = if (customBg) Mc.textPrimary else Mc.textSecondary
+                                    )
                                 }
                             }
                         }
@@ -290,8 +296,8 @@ fun LocalPage(
 
 @Composable
 fun DownloadsPage(items: List<DownloadItem>, saveDir: String, onRetry: (DownloadItem) -> Unit) {
-    // v2.21.5：自定义主页背景激活时进度轨道半透明融入
-    val progressTrack = surfaceColor(Color(0xFFF0F0F2), LocalHomeCustomBg.current, 0.70f)
+    // v2.21.5：自定义主页背景激活时进度轨道半透明融入（自定义背景下进一步降透）
+    val progressTrack = surfaceColor(Color(0xFFF0F0F2), LocalHomeCustomBg.current, 0.50f)
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
             Text(text = "下载管理", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Mc.textPrimary)
@@ -310,7 +316,7 @@ fun DownloadsPage(items: List<DownloadItem>, saveDir: String, onRetry: (Download
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             AsyncCover(
-                                url = item.song.picUrl,
+                                song = item.song,
                                 modifier = Modifier
                                     .size(40.dp)
                                     .clip(RoundedCornerShape(4.dp))
@@ -411,8 +417,8 @@ private fun PageHeader(
             Row(
                 Modifier
                     .clip(RoundedCornerShape(18.dp))
-                    // v2.21.5：自定义主页背景激活时辅助按钮芯片半透明融入
-                    .background(surfaceColor(Mc.hover, LocalHomeCustomBg.current, 0.60f))
+                    // v2.21.5：自定义主页背景激活时辅助按钮芯片半透明融入（自定义背景下更透）
+                    .background(surfaceColor(Mc.hover, LocalHomeCustomBg.current, 0.42f))
                     .clickable(onClick = onSecondary)
                     .padding(horizontal = 14.dp, vertical = 7.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -420,11 +426,15 @@ private fun PageHeader(
                 Icon(
                     Icons.Filled.Refresh,
                     contentDescription = null,
-                    tint = Mc.textSecondary,
+                    tint = if (LocalHomeCustomBg.current) Mc.textPrimary else Mc.textSecondary,
                     modifier = Modifier.size(13.dp)
                 )
                 Spacer(Modifier.width(5.dp))
-                Text(text = secondaryText, fontSize = 12.sp, color = Mc.textSecondary)
+                Text(
+                    text = secondaryText,
+                    fontSize = 12.sp,
+                    color = if (LocalHomeCustomBg.current) Mc.textPrimary else Mc.textSecondary
+                )
             }
             Spacer(Modifier.width(10.dp))
         }
@@ -487,9 +497,9 @@ private fun SongRow(
             }
         }
         Spacer(Modifier.width(8.dp))
-        // 封面
+        // 封面（自动解析在线网络图 / 本地内嵌封面，无图显示默认封面）
         AsyncCover(
-            url = song.picUrl.takeIf { it.isNotEmpty() },
+            song = song,
             modifier = Modifier
                 .size(42.dp)
                 .clip(RoundedCornerShape(4.dp))
@@ -528,8 +538,8 @@ private fun SongRow(
             Box(
                 Modifier
                     .clip(RoundedCornerShape(6.dp))
-                    // v2.21.5：自定义主页背景激活时芯片半透明融入
-                    .background(surfaceColor(Mc.hover, LocalHomeCustomBg.current, 0.60f))
+                    // v2.21.5：自定义主页背景激活时芯片半透明融入（自定义背景下更透）
+                    .background(surfaceColor(Mc.hover, LocalHomeCustomBg.current, 0.42f))
                     .clickable(onClick = onDownloadLyric)
                     .padding(horizontal = 7.dp, vertical = 3.dp)
             ) {
@@ -537,7 +547,7 @@ private fun SongRow(
                     text = "词",
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Medium,
-                    color = Mc.textSecondary
+                    color = if (LocalHomeCustomBg.current) Mc.textPrimary else Mc.textSecondary
                 )
             }
             Spacer(Modifier.width(10.dp))
@@ -595,7 +605,7 @@ fun queryLocalSongs(
     }
 }
 
-/** MediaStore 全库扫描 */
+/** MediaStore 全库扫描（读真实标签：标题/歌手/专辑/时长 + 绝对路径供内嵌封面提取） */
 private fun scanMediaStore(context: Context): List<SongInfo> {
     val list = mutableListOf<SongInfo>()
     val projection = arrayOf(
@@ -603,7 +613,8 @@ private fun scanMediaStore(context: Context): List<SongInfo> {
         MediaStore.Audio.Media.TITLE,
         MediaStore.Audio.Media.ARTIST,
         MediaStore.Audio.Media.ALBUM,
-        MediaStore.Audio.Media.DURATION
+        MediaStore.Audio.Media.DURATION,
+        MediaStore.Audio.Media.DATA
     )
     runCatching {
         context.contentResolver.query(
@@ -618,19 +629,24 @@ private fun scanMediaStore(context: Context): List<SongInfo> {
             val artistCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
             val albumCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
             val durCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
+            val dataCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
             while (c.moveToNext()) {
                 val id = c.getLong(idCol)
                 val uri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
+                val path = runCatching { c.getString(dataCol) }.getOrNull()
+                val fileNameTitle = path?.let { p -> File(p).nameWithoutExtension }
+                val name = c.getString(titleCol)?.takeIf { it.isNotBlank() } ?: fileNameTitle ?: "未知标题"
                 list.add(
                     SongInfo(
                         id = id.toString(),
-                        name = c.getString(titleCol) ?: "未知标题",
+                        name = name,
                         artist = (c.getString(artistCol) ?: "").ifBlank { "未知歌手" },
                         album = (c.getString(albumCol) ?: "").ifBlank { "未知专辑" },
                         durationMs = c.getLong(durCol),
                         picUrl = "",
                         source = SongInfo.SOURCE_LOCAL,
-                        localUri = uri.toString()
+                        localUri = uri.toString(),
+                        localPath = path?.takeIf { it.isNotBlank() }
                     )
                 )
             }
@@ -639,35 +655,58 @@ private fun scanMediaStore(context: Context): List<SongInfo> {
     return list
 }
 
-/** 指定目录扫描：递归遍历目录下的音频文件，按文件名推断歌手/标题 */
+/**
+ * 指定目录扫描：递归遍历目录下的音频文件，
+ * 用 MediaMetadataRetriever 读音频内真实标签（标题/歌手/专辑/时长），
+ * 读取失败时回退按文件名推断（"歌手 - 标题.mp3"）。
+ */
 private fun scanSpecifiedDirs(dirs: List<String>): List<SongInfo> {
     val seen = HashSet<String>()
     val out = mutableListOf<SongInfo>()
-    for (dirPath in dirs) {
-        val dir = File(dirPath)
-        if (!dir.isDirectory) continue
-        runCatching {
-            dir.walkTopDown()
-                .filter { it.isFile && it.extension.lowercase() in AUDIO_EXTENSIONS }
-                .forEach { f ->
-                    val path = f.absolutePath
-                    if (seen.add(path)) {
-                        val (title, artist) = parseNamesFromFileName(f.nameWithoutExtension)
-                        out.add(
-                            SongInfo(
-                                id = "file_$path",
-                                name = title,
-                                artist = artist,
-                                album = dir.name,
-                                durationMs = 0L,
-                                picUrl = "",
-                                source = SongInfo.SOURCE_LOCAL,
-                                localUri = Uri.fromFile(f).toString()
+    val mmr = MediaMetadataRetriever()
+    try {
+        for (dirPath in dirs) {
+            val dir = File(dirPath)
+            if (!dir.isDirectory) continue
+            runCatching {
+                dir.walkTopDown()
+                    .filter { it.isFile && it.extension.lowercase() in AUDIO_EXTENSIONS }
+                    .forEach { f ->
+                        val path = f.absolutePath
+                        if (seen.add(path)) {
+                            // 优先读音频内真实标签；失败回退文件名解析
+                            val meta = runCatching {
+                                mmr.setDataSource(path)
+                                Triple(
+                                    mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE),
+                                    mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST),
+                                    mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+                                ) to mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                            }.getOrNull()
+                            val fromName = parseNamesFromFileName(f.nameWithoutExtension)
+                            val title = meta?.first?.first?.takeIf { !it.isNullOrBlank() } ?: fromName.first
+                            val artist = meta?.first?.second?.takeIf { !it.isNullOrBlank() } ?: fromName.second
+                            val album = meta?.first?.third?.takeIf { !it.isNullOrBlank() } ?: dir.name
+                            val duration = meta?.second?.toLongOrNull() ?: 0L
+                            out.add(
+                                SongInfo(
+                                    id = "file_$path",
+                                    name = title,
+                                    artist = artist,
+                                    album = album,
+                                    durationMs = duration,
+                                    picUrl = "",
+                                    source = SongInfo.SOURCE_LOCAL,
+                                    localUri = Uri.fromFile(f).toString(),
+                                    localPath = path
+                                )
                             )
-                        )
+                        }
                     }
-                }
+            }
         }
+    } finally {
+        runCatching { mmr.release() }
     }
     return out
 }

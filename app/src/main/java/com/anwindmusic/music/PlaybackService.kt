@@ -67,11 +67,11 @@ class PlaybackService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-    /** 通知增量刷新依据：歌名 / 播放态 / 封面URL 变化才重建通知 */
+    /** 通知增量刷新依据：歌名 / 播放态 / 封面源变化才重建通知 */
     private var lastNotifKey: String = ""
     private var lastMetaKey: String? = null
     private var largeIcon: Bitmap? = null
-    private var lastCoverUrl: String? = null
+    private var lastCoverSrc: String? = null
 
     private val tick = object : Runnable {
         override fun run() {
@@ -245,7 +245,7 @@ class PlaybackService : Service() {
         val key = "${song?.key}|${e.isPlaying}|${e.isPreparing}|${largeIcon != null}"
         if (key == lastNotifKey) return
         lastNotifKey = key
-        refreshLargeIcon(song?.picUrl)
+        refreshLargeIcon(song)
         startForegroundWith(buildNotification())
     }
 
@@ -260,14 +260,31 @@ class PlaybackService : Service() {
         }
     }
 
-    /** 异步加载封面作通知大图（加载完成后再刷新一次通知） */
-    private fun refreshLargeIcon(url: String?) {
-        if (url == lastCoverUrl) return
-        lastCoverUrl = url
+    /**
+     * 异步加载封面作通知大图（加载完成后再刷新一次通知）：
+     * 在线歌用网络封面；本地歌提取内嵌封面（LocalCover 磁盘缓存）；都无则无大图。
+     */
+    private fun refreshLargeIcon(song: SongInfo?) {
+        val src = when {
+            song == null -> null
+            !song.isLocal && song.picUrl.isNotBlank() -> song.picUrl
+            else -> "local:${song.key}"   // 本地歌：内嵌封面（含提取失败后的空图）
+        }
+        if (src == lastCoverSrc) return
+        lastCoverSrc = src
         serviceScope.launch {
-            val bmp = if (url.isNullOrBlank()) null
-            else withContext(Dispatchers.IO) { runCatching { loadBitmap(url, 512) }.getOrNull() }
-            largeIcon = bmp
+            largeIcon = if (song == null) {
+                null
+            } else {
+                withContext(Dispatchers.IO) {
+                    if (!song.isLocal && song.picUrl.isNotBlank()) {
+                        runCatching { loadBitmap(song.picUrl, 512) }.getOrNull()
+                    } else {
+                        val path = LocalCover.extractCached(applicationContext, song)
+                        path?.let { runCatching { loadBitmap(it, 512) }.getOrNull() }
+                    }
+                }
+            }
             lastNotifKey = ""
             updateNotification()
         }
