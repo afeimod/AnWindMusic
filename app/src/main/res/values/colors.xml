@@ -2,7 +2,7 @@
 <resources>
     <!-- 品牌红（网易云音乐 PC 版风格） -->
     <color name="brand_red">#EC4141</color>
-    <color name="ic_launcher_background">#EC4141</color>
+    <color name="ic_launcher_background">#172B8E</color>
     <color name="window_bg">#FCFCFD</color>
     <color name="status_bar">#FCFCFD</color>
 </resources>

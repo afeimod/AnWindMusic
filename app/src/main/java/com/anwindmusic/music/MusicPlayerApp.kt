@@ -1,5 +1,6 @@
 package com.anwindmusic.music
 
+import android.app.Activity
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -15,8 +16,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -67,6 +70,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
 import java.io.File
 import kotlinx.coroutines.launch
 
@@ -203,6 +207,26 @@ fun MusicContent(
     fun openPicker(kind: String, mode: String) {
         pendingPick = kind
         if (mode == "image") onPickImage(kind) else onPickFolder()
+    }
+
+    // ===== 系统栏图标颜色适配 =====
+    // 主界面浅色背景 → 深色图标；歌词页深色背景（0xFF0B0B10）→ 浅色图标。
+    // 真全屏模式下系统栏已隐藏，此设置仅在退出全屏/半屏歌词时生效。
+    DisposableEffect(showLyrics, isFullscreen) {
+        val window = (context as? Activity)?.window
+        if (window != null) {
+            val controller = WindowCompat.getInsetsController(window, window.decorView)
+            controller.isAppearanceLightStatusBars = !showLyrics
+            controller.isAppearanceLightNavigationBars = !showLyrics
+        }
+        onDispose {
+            // 离开组合时恢复浅色主题默认（深色图标）
+            (context as? Activity)?.window?.let { w ->
+                val c = WindowCompat.getInsetsController(w, w.decorView)
+                c.isAppearanceLightStatusBars = true
+                c.isAppearanceLightNavigationBars = true
+            }
+        }
     }
 
     DisposableEffect(Unit) {
@@ -364,7 +388,9 @@ fun MusicContent(
     }
     // 向全内容区提供自定义背景激活标记 —— 表面控件自动半透明融入
     CompositionLocalProvider(LocalHomeCustomBg provides homeCustomBg) {
-        Box(Modifier.fillMaxSize()) {
+        // imePadding：edge-to-edge 下键盘不挤压窗口（API 30+），由 insets 把整体抬到键盘上方；
+        // API 24-29 的 adjustResize 窗口缩放路径下 ime insets 为 0，此修饰符自动无操作
+        Box(Modifier.fillMaxSize().imePadding()) {
             // 自定义图片背景 + 压暗层（仅图片模式）
             if (musicSettings.homeBgMode == MusicSettings.BG_IMAGE) {
                 BgImage(musicSettings.homeBgImage, Modifier.matchParentSize())
@@ -568,6 +594,8 @@ private fun MusicTopBar(customBg: Boolean, onSettings: () -> Unit) {
         Modifier
             .fillMaxWidth()
             .background(if (customBg) Color.White.copy(alpha = 0.72f) else Mc.sidebarBg)
+            // 状态栏/刘海区域由本栏背景延伸填充（edge-to-edge），内容避让到状态栏下方
+            .statusBarsPadding()
             .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

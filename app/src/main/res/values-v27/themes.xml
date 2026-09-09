@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 默认全屏 edge-to-edge 主题（API 24-26 基线）：
-         状态栏透明（内容延伸到状态栏后面）；导航栏实色浅色（26- 透明导航栏支持不完整，退化为实色）
-         API 27+ 的完全透明版本见 values-v27/themes.xml -->
+    <!-- 默认全屏 edge-to-edge 主题（API 27+）：
+         状态栏/导航栏全透明，内容绘制到系统栏后面（占用刘海区域）；
+         浅色背景配深色系统栏图标 -->
     <style name="Theme.AnWindMusic" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/window_bg</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:navigationBarColor">@color/status_bar</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
     </style>
 </resources>

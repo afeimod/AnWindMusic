@@ -20,9 +20,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -182,7 +184,14 @@ fun Lyrics3DPage(
         )
 
         // ===== 内容 =====
-        Column(Modifier.fillMaxSize()) {
+        // 背景/封面延伸到状态栏/导航栏/刘海后面（edge-to-edge 占用刘海），
+        // 内容避让系统栏；真全屏（系统栏隐藏）时 insets 归零，自动铺满全屏
+        Column(
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+        ) {
             // ---- 顶部标题栏：返回 + 《歌名》 + 歌手 + 歌词下载 ----
             Row(
                 Modifier
