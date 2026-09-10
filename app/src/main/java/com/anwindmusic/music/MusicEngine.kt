@@ -394,7 +394,7 @@ class MusicEngine(context: Context) {
                 song.isLocal -> song.localUri
                 song.downloadedPath != null && java.io.File(song.downloadedPath).isFile ->
                     Uri.fromFile(java.io.File(song.downloadedPath)).toString()
-                // v2.24：简音 Meting 音源 → 解析代理直链（302 跟随）；其余在线歌走酷我解析
+                // v2.24：聚合 Meting 音源 → 解析代理直链（302 跟随）；其余在线歌走酷我解析
                 else -> song.metingServer
                     ?.let { MetingMusicApi.resolvePlayUrl(it, song.id).getOrNull() }
                     ?: KuwoMusicApi.getPlayUrl(song.id).getOrNull()

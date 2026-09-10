@@ -6,8 +6,8 @@
 
 ### 在线音乐
 - **搜索播放**：酷我音乐曲库关键词搜索（歌名/歌手/专辑），分页加载，热门关键词快捷入口
-- **双搜索音源（v2.24）**：搜索页一键切换「酷我 / 简音」两音源，选择自动记忆；
-  简音源为开源项目简音同款 Meting 聚合接口（api.qijieya.cn），网易云曲库直连
+- **双搜索音源（v2.24）**：搜索页一键切换「酷我 / 聚合」两音源，选择自动记忆；
+  聚合源为开源项目聚合同款 Meting 聚合接口（api.qijieya.cn），网易云曲库直连
   （空结果自动回落酷狗），即搜即播 + 封面/歌词直链自动跟进，收藏/下载/歌词全功能通用
 - **多源播放直链解析**：多个解析 API 依次回退，失败自动切换
 - **歌曲下载**：MP3 下载（带进度条/失败重试/下载管理页），歌词同步下载为 .lrc
@@ -106,7 +106,7 @@ AnWindMusic/
 │       ├── Lyrics3DPage.kt        # 3D 歌词秀
 │       ├── LyricEngines.kt        # QQ 音乐 / LRCLIB 词源
 │       ├── KuwoMusicApi.kt        # 酷我 API（搜索/直链/歌词/下载）+ 网易云兜底
-│       ├── MetingMusicApi.kt      # 简音同款 Meting 聚合音源（搜索/代理直链/歌词）
+│       ├── MetingMusicApi.kt      # 聚合同款 Meting 聚合音源（搜索/代理直链/歌词）
 │       ├── LyricOverlayService.kt # 桌面歌词悬浮窗服务 + DesktopLyricBus
 │       └── PlaybackService.kt     # 前台播放服务（通知控制/MediaSession/锁屏线控）
 ├── .github/workflows/build.yml    # GitHub Actions 手动构建（workflow_dispatch）
