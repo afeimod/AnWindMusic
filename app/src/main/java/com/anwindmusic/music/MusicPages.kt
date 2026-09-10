@@ -38,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -75,8 +76,8 @@ fun SearchPage(
     onDownloadLyric: (SongInfo) -> Unit,
     downloadOf: (String) -> DownloadItem?
 ) {
-    // v2.21.5：自定义主页背景激活时热门词芯片半透明融入
-    val customBg = LocalHomeCustomBg.current
+    // v1.2：自定义主页背景激活时热门词芯片/列表文字随明暗自适应+光晕
+    val sch = LocalAdaptiveScheme.current
     Column(Modifier.fillMaxSize()) {
         // 顶部搜索框
         McSearchField(
@@ -96,7 +97,8 @@ fun SearchPage(
                         text = "热门搜索",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Mc.textPrimary
+                        color = sch.textPrimary,
+                        style = TextStyle(shadow = sch.shadow)
                     )
                     Spacer(Modifier.height(10.dp))
                     // 两行流式排布的简化版：分行排列
@@ -109,18 +111,19 @@ fun SearchPage(
                                 Box(
                                     Modifier
                                         .clip(RoundedCornerShape(14.dp))
-                                        .background(surfaceColor(Mc.hover, customBg, 0.42f))
+                                        .background(if (sch.isCustom) sch.glassField else Mc.hover)
                                         .clickable {
                                             onQueryChange(kw)
                                             onSearch(kw)
                                         }
                                         .padding(horizontal = 12.dp, vertical = 6.dp)
                                 ) {
-                                    // 自定义背景下表面更透：文字加深保证可读性
+                                    // v1.2：芯片更透，文字实心自适应色+光晕保证可读
                                     Text(
                                         text = kw,
                                         fontSize = 12.sp,
-                                        color = if (customBg) Mc.textPrimary else Mc.textSecondary
+                                        color = if (sch.isCustom) sch.textPrimary else Mc.textSecondary,
+                                        style = TextStyle(shadow = sch.shadow)
                                     )
                                 }
                             }
@@ -140,22 +143,24 @@ fun SearchPage(
                 Text(
                     text = error,
                     fontSize = 12.sp,
-                    color = Mc.textTertiary,
+                    color = if (sch.isCustom) sch.textSecondary else Mc.textTertiary,
+                    style = TextStyle(shadow = sch.shadow),
                     modifier = Modifier.padding(16.dp)
                 )
             }
         } else {
-            // 表头（对照图2：# / 标题 / 专辑 / 时长）
+            // 表头（对照图2：# / 标题 / 专辑 / 时长；v1.2 自适应+光晕）
             Row(
                 Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("#", fontSize = 11.sp, color = Mc.textTertiary, modifier = Modifier.width(30.dp))
-                Text("标题", fontSize = 11.sp, color = Mc.textTertiary, modifier = Modifier.weight(1f))
+                val headerColor = if (sch.isCustom) sch.textSecondary else Mc.textTertiary
+                Text("#", fontSize = 11.sp, color = headerColor, style = TextStyle(shadow = sch.shadow), modifier = Modifier.width(30.dp))
+                Text("标题", fontSize = 11.sp, color = headerColor, style = TextStyle(shadow = sch.shadow), modifier = Modifier.weight(1f))
                 Box(Modifier.weight(0.32f))
-                Text("时长", fontSize = 11.sp, color = Mc.textTertiary, modifier = Modifier.width(46.dp))
+                Text("时长", fontSize = 11.sp, color = headerColor, style = TextStyle(shadow = sch.shadow), modifier = Modifier.width(46.dp))
                 Spacer(Modifier.width(112.dp)) // 收藏+词+下载按钮空间（v2.21.4 加词芯片）
             }
             LazyColumn(Modifier.fillMaxSize()) {
@@ -185,7 +190,12 @@ fun SearchPage(
                         if (searching) {
                             CircularProgressIndicator(color = Mc.red, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
                         } else {
-                            Text("加载更多", fontSize = 12.sp, color = Mc.textTertiary)
+                            Text(
+                                "加载更多",
+                                fontSize = 12.sp,
+                                color = if (sch.isCustom) sch.textSecondary else Mc.textTertiary,
+                                style = TextStyle(shadow = sch.shadow)
+                            )
                         }
                     }
                 }
@@ -296,13 +306,26 @@ fun LocalPage(
 
 @Composable
 fun DownloadsPage(items: List<DownloadItem>, saveDir: String, onRetry: (DownloadItem) -> Unit) {
-    // v2.21.5：自定义主页背景激活时进度轨道半透明融入（自定义背景下进一步降透）
-    val progressTrack = surfaceColor(Color(0xFFF0F0F2), LocalHomeCustomBg.current, 0.50f)
+    // v1.2：自定义主页背景激活时进度轨道随明暗自适应
+    val sch = LocalAdaptiveScheme.current
+    val progressTrack = if (sch.isCustom) sch.track else Color(0xFFF0F0F2)
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
-            Text(text = "下载管理", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Mc.textPrimary)
+            Text(
+                text = "下载管理",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = sch.textPrimary,
+                style = TextStyle(shadow = sch.shadow)
+            )
             Spacer(Modifier.height(4.dp))
-            Text(text = "保存目录：$saveDir", fontSize = 10.sp, color = Mc.textTertiary, maxLines = 2)
+            Text(
+                text = "保存目录：$saveDir",
+                fontSize = 10.sp,
+                color = if (sch.isCustom) sch.textSecondary else Mc.textTertiary,
+                style = TextStyle(shadow = sch.shadow),
+                maxLines = 2
+            )
         }
         if (items.isEmpty()) {
             McEmpty("暂无下载任务，在歌曲行点击下载图标即可离线保存")
@@ -326,25 +349,29 @@ fun DownloadsPage(items: List<DownloadItem>, saveDir: String, onRetry: (Download
                                 EllipsisText(
                                     text = "${item.song.name} - ${item.song.artist}",
                                     fontSize = 13,
-                                    color = Mc.textPrimary,
-                                    fontWeight = FontWeight.Medium
+                                    color = sch.textPrimary,
+                                    fontWeight = FontWeight.Medium,
+                                    shadow = sch.shadow
                                 )
                                 Spacer(Modifier.height(2.dp))
                                 when {
                                     item.done -> EllipsisText(
                                         text = "已完成：${item.file?.name ?: ""}（含歌词 .lrc）",
                                         fontSize = 10,
-                                        color = Mc.textTertiary
+                                        color = if (sch.isCustom) sch.textSecondary else Mc.textTertiary,
+                                        shadow = sch.shadow
                                     )
                                     item.failed -> EllipsisText(
                                         text = "失败：${item.error ?: "未知错误"}",
                                         fontSize = 10,
-                                        color = Mc.red
+                                        color = Mc.red,
+                                        shadow = sch.shadow
                                     )
                                     else -> EllipsisText(
                                         text = "下载中 ${(item.progress * 100).toInt()}%",
                                         fontSize = 10,
-                                        color = Mc.textSecondary
+                                        color = sch.textSecondary,
+                                        shadow = sch.shadow
                                     )
                                 }
                             }
@@ -359,7 +386,7 @@ fun DownloadsPage(items: List<DownloadItem>, saveDir: String, onRetry: (Download
                                 Icon(
                                     Icons.Filled.Refresh,
                                     contentDescription = "重试",
-                                    tint = Mc.textSecondary,
+                                    tint = sch.textSecondary,
                                     modifier = Modifier
                                         .size(18.dp)
                                         .clickable { onRetry(item) }
@@ -409,16 +436,30 @@ private fun PageHeader(
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        // v1.2：页头文字随背景明暗自适应+光晕
+        val sch = LocalAdaptiveScheme.current
         Column(Modifier.weight(1f)) {
-            Text(text = title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Mc.textPrimary)
-            Text(text = subtitle, fontSize = 11.sp, color = Mc.textTertiary)
+            Text(
+                text = title,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = sch.textPrimary,
+                style = TextStyle(shadow = sch.shadow)
+            )
+            Text(
+                text = subtitle,
+                fontSize = 11.sp,
+                color = if (sch.isCustom) sch.textSecondary else Mc.textTertiary,
+                style = TextStyle(shadow = sch.shadow)
+            )
         }
         if (secondaryText != null && onSecondary != null) {
+            // v1.2：辅助按钮芯片随明暗自适应（更透+实心文字）
+            val sch = LocalAdaptiveScheme.current
             Row(
                 Modifier
                     .clip(RoundedCornerShape(18.dp))
-                    // v2.21.5：自定义主页背景激活时辅助按钮芯片半透明融入（自定义背景下更透）
-                    .background(surfaceColor(Mc.hover, LocalHomeCustomBg.current, 0.42f))
+                    .background(if (sch.isCustom) sch.glassField else Mc.hover)
                     .clickable(onClick = onSecondary)
                     .padding(horizontal = 14.dp, vertical = 7.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -426,14 +467,15 @@ private fun PageHeader(
                 Icon(
                     Icons.Filled.Refresh,
                     contentDescription = null,
-                    tint = if (LocalHomeCustomBg.current) Mc.textPrimary else Mc.textSecondary,
+                    tint = if (sch.isCustom) sch.textPrimary else Mc.textSecondary,
                     modifier = Modifier.size(13.dp)
                 )
                 Spacer(Modifier.width(5.dp))
                 Text(
                     text = secondaryText,
                     fontSize = 12.sp,
-                    color = if (LocalHomeCustomBg.current) Mc.textPrimary else Mc.textSecondary
+                    color = if (sch.isCustom) sch.textPrimary else Mc.textSecondary,
+                    style = TextStyle(shadow = sch.shadow)
                 )
             }
             Spacer(Modifier.width(10.dp))
@@ -475,6 +517,8 @@ private fun SongRow(
     // v2.21.4：歌词下载动作（词芯片，仅搜索页传入；null = 不显示）
     onDownloadLyric: (() -> Unit)? = null
 ) {
+    // v1.2：整行文字/图标随背景明暗自适应，直接压在背景上的文字加光晕
+    val sch = LocalAdaptiveScheme.current
     Row(
         Modifier
             .fillMaxWidth()
@@ -492,7 +536,9 @@ private fun SongRow(
                 Text(
                     text = "%02d".format(index),
                     fontSize = 12.sp,
-                    color = if (isCurrent) Mc.red else Mc.textTertiary
+                    color = if (isCurrent) Mc.red
+                            else if (sch.isCustom) sch.textSecondary else Mc.textTertiary,
+                    style = TextStyle(shadow = sch.shadow)
                 )
             }
         }
@@ -510,8 +556,9 @@ private fun SongRow(
             EllipsisText(
                 text = song.name,
                 fontSize = 14,
-                color = if (isCurrent) Mc.red else Mc.textPrimary,
-                fontWeight = FontWeight.Medium
+                color = if (isCurrent) Mc.red else sch.textPrimary,
+                fontWeight = FontWeight.Medium,
+                shadow = if (isCurrent) null else sch.shadow
             )
             Spacer(Modifier.height(2.dp))
             EllipsisText(
@@ -520,14 +567,16 @@ private fun SongRow(
                     .joinToString(" · ")
                     .ifBlank { "未知歌手" },
                 fontSize = 11,
-                color = Mc.textTertiary
+                color = if (sch.isCustom) sch.textSecondary else Mc.textTertiary,
+                shadow = sch.shadow
             )
         }
         // 收藏
         Icon(
             imageVector = if (isFav) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
             contentDescription = "喜欢",
-            tint = if (isFav) Mc.red else Color(0xFFC9C9CF),
+            tint = if (isFav) Mc.red
+                   else if (sch.isCustom) sch.textTertiary else Color(0xFFC9C9CF),
             modifier = Modifier
                 .size(15.dp)
                 .clickable(onClick = onToggleFav)
@@ -538,8 +587,8 @@ private fun SongRow(
             Box(
                 Modifier
                     .clip(RoundedCornerShape(6.dp))
-                    // v2.21.5：自定义主页背景激活时芯片半透明融入（自定义背景下更透）
-                    .background(surfaceColor(Mc.hover, LocalHomeCustomBg.current, 0.42f))
+                    // v1.2：芯片随明暗自适应（更透+实心文字）
+                    .background(if (sch.isCustom) sch.glassField else Mc.hover)
                     .clickable(onClick = onDownloadLyric)
                     .padding(horizontal = 7.dp, vertical = 3.dp)
             ) {
@@ -547,7 +596,8 @@ private fun SongRow(
                     text = "词",
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Medium,
-                    color = if (LocalHomeCustomBg.current) Mc.textPrimary else Mc.textSecondary
+                    color = if (sch.isCustom) sch.textPrimary else Mc.textSecondary,
+                    style = TextStyle(shadow = sch.shadow)
                 )
             }
             Spacer(Modifier.width(10.dp))
@@ -564,7 +614,7 @@ private fun SongRow(
                     Icon(
                         Icons.Filled.Download,
                         contentDescription = "下载",
-                        tint = Color(0xFFC9C9CF),
+                        tint = if (sch.isCustom) sch.textTertiary else Color(0xFFC9C9CF),
                         modifier = Modifier
                             .size(15.dp)
                             .clickable(onClick = onDownload)
@@ -576,7 +626,8 @@ private fun SongRow(
         Text(
             text = if (song.durationMs > 0) fmtTime(song.durationMs) else "--:--",
             fontSize = 11.sp,
-            color = Mc.textTertiary,
+            color = if (sch.isCustom) sch.textSecondary else Mc.textTertiary,
+            style = TextStyle(shadow = sch.shadow),
             modifier = Modifier.width(44.dp),
             textAlign = androidx.compose.ui.text.style.TextAlign.Right
         )

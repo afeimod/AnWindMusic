@@ -43,11 +43,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
@@ -95,21 +98,126 @@ object Mc {
     val lyricDim = Color(0xFFC9C9D2)
 }
 
-// ==================== 自定义背景半透明表面（v2.21.5） ====================
+// ==================== 自定义背景与动态清晰度配色（v2.21.5 / v1.2） ====================
 
 /**
- * v2.21.5：主页自定义背景（纯色/渐变/图片）激活标记，由 App 根部 CompositionLocalProvider 提供。
- * 内容区表面（设置卡片/模式芯片/搜索框/热门词芯片等）据此自动半透明融入背景，
- * 与侧栏（白 72%）/底栏（白 80%）同一视觉语言。
+ * 主页自定义背景（纯色/渐变/图片）激活标记，由 App 根部 CompositionLocalProvider 提供。
+ * v1.2 起配合 [LocalAdaptiveScheme] 使用：菜单更透明的同时按背景明暗自动保证文字可读。
  */
 val LocalHomeCustomBg = compositionLocalOf { false }
 
 /**
- * v2.21.5：表面配色 —— 自定义背景激活时给白色/浅灰表面加透明度使其融入背景：
- * 大卡片面板用 0.72（同侧栏），小芯片/输入框用 0.60；未开启自定义背景时返回原色。
+ * v1.2 动态清晰度配色方案：
+ * - 按自定义背景的等效亮度自动切换两套方案：
+ *   亮背景 → 深色实心文字 + 白色玻璃面板 + 白色柔光光晕；
+ *   暗背景 → 白色实心文字 + 黑色玻璃面板 + 黑色投影光晕。
+ * - 光晕（Shadow）让文字直接压在花哨背景上时也保持局部对比度（类似视频字幕描边），
+ *   实现「任意壁纸、任意透明度，文字都清晰」的动态清晰度。
+ *
+ * @param isCustom 自定义背景是否激活（未激活 = 标准白色主题，与旧版完全一致）
+ * @param luminance 背景等效亮度 0~1（null = 默认背景）
  */
-fun surfaceColor(base: Color, customBg: Boolean, alpha: Float): Color =
-    if (customBg) base.copy(alpha = alpha) else base
+data class AdaptiveScheme(
+    val isCustom: Boolean,
+    val isLight: Boolean,
+    val textPrimary: Color,
+    val textSecondary: Color,
+    val textTertiary: Color,
+    /** 大面板玻璃：顶栏/播放条/底栏/设置卡片（v1.2 再降透：白 0.35 / 黑 0.45） */
+    val glass: Color,
+    /** 小表面玻璃：模式芯片/搜索框/输入框/辅助按钮 */
+    val glassField: Color,
+    val divider: Color,
+    /** 色板/单选描边 */
+    val border: Color,
+    /** 滑条与进度条未激活轨道 */
+    val track: Color,
+    /** 文字光晕：亮背景白色柔光、暗背景黑色投影；未开启自定义背景为 null */
+    val shadow: Shadow?
+)
+
+/** 标准方案（未开启自定义背景 = 原白色主题） */
+private val StandardScheme = AdaptiveScheme(
+    isCustom = false,
+    isLight = true,
+    textPrimary = Mc.textPrimary,
+    textSecondary = Mc.textSecondary,
+    textTertiary = Mc.textTertiary,
+    glass = Color.White,
+    glassField = Mc.searchFieldBg,
+    divider = Mc.divider,
+    border = Mc.divider,
+    track = Color(0xFFE5E5E8),
+    shadow = null
+)
+
+/** 按自定义背景激活状态与等效亮度解析配色方案（亮度阈值 0.5） */
+fun adaptiveScheme(isCustom: Boolean, luminance: Float?): AdaptiveScheme {
+    if (!isCustom) return StandardScheme
+    return if ((luminance ?: 0.75f) >= 0.5f) {
+        AdaptiveScheme(
+            isCustom = true, isLight = true,
+            textPrimary = Color(0xFF15151B),
+            textSecondary = Color(0xFF43434C),
+            textTertiary = Color(0xFF5E5E68),
+            glass = Color.White.copy(alpha = 0.35f),
+            glassField = Color.White.copy(alpha = 0.42f),
+            divider = Color.White.copy(alpha = 0.40f),
+            border = Color.Black.copy(alpha = 0.20f),
+            track = Color.Black.copy(alpha = 0.30f),
+            shadow = Shadow(
+                color = Color.White.copy(alpha = 0.65f),
+                offset = Offset(0f, 2f),
+                blurRadius = 8f
+            )
+        )
+    } else {
+        AdaptiveScheme(
+            isCustom = true, isLight = false,
+            textPrimary = Color.White,
+            textSecondary = Color(0xFFE8E8EF),
+            textTertiary = Color(0xFFCDCDD6),
+            glass = Color(0xFF0E0E13).copy(alpha = 0.45f),
+            glassField = Color(0xFF0E0E13).copy(alpha = 0.52f),
+            divider = Color.White.copy(alpha = 0.18f),
+            border = Color.White.copy(alpha = 0.35f),
+            track = Color.White.copy(alpha = 0.28f),
+            shadow = Shadow(
+                color = Color.Black.copy(alpha = 0.55f),
+                offset = Offset(0f, 2f),
+                blurRadius = 8f
+            )
+        )
+    }
+}
+
+/** 全局自适应配色方案（App 根部提供；未提供处取标准白色主题） */
+val LocalAdaptiveScheme = staticCompositionLocalOf { StandardScheme }
+
+/**
+ * 位图平均亮度（0~1，约 32×32 网格取样）：
+ * 用于主页自定义图片背景的明暗自适应（动态清晰度）。
+ */
+fun Bitmap.averageLuminance(): Float {
+    var total = 0f
+    var n = 0
+    val stepX = (width / 32).coerceAtLeast(1)
+    val stepY = (height / 32).coerceAtLeast(1)
+    var y = 0
+    while (y < height) {
+        var x = 0
+        while (x < width) {
+            val c = getPixel(x, y)
+            total += (0.2126f * android.graphics.Color.red(c) +
+                0.7152f * android.graphics.Color.green(c) +
+                0.0722f * android.graphics.Color.blue(c)) / 255f
+            n++
+            x += stepX
+        }
+        y += stepY
+    }
+    return if (n == 0) 1f else total / n
+}
 
 // ==================== 时间格式化 ====================
 
@@ -376,8 +484,9 @@ fun McSearchField(
     modifier: Modifier = Modifier,
     hint: String = "搜索歌曲、歌手、专辑"
 ) {
-    // v2.21.5：自定义主页背景激活时搜索框半透明融入（浅灰玻璃，深色文字仍可读）
-    val fieldBg = surfaceColor(Mc.searchFieldBg, LocalHomeCustomBg.current, 0.60f)
+    // v1.2：自定义背景激活时搜索框用「小表面玻璃」并随背景明暗自适应，文字叠加光晕
+    val sch = LocalAdaptiveScheme.current
+    val fieldBg = if (sch.isCustom) sch.glassField else Mc.searchFieldBg
     Row(
         modifier = modifier
             .height(34.dp)
@@ -389,7 +498,7 @@ fun McSearchField(
         Icon(
             imageVector = Icons.Filled.Search,
             contentDescription = null,
-            tint = Mc.textTertiary,
+            tint = if (sch.isCustom) sch.textTertiary else Mc.textTertiary,
             modifier = Modifier.size(16.dp)
         )
         Spacer(Modifier.width(8.dp))
@@ -397,16 +506,21 @@ fun McSearchField(
             if (query.isEmpty()) {
                 Text(
                     text = hint,
-                    color = Mc.textTertiary,
+                    color = if (sch.isCustom) sch.textTertiary else Mc.textTertiary,
                     fontSize = 13.sp,
-                    maxLines = 1
+                    maxLines = 1,
+                    style = TextStyle(shadow = sch.shadow)
                 )
             }
             BasicTextField(
                 value = query,
                 onValueChange = onQueryChange,
                 singleLine = true,
-                textStyle = TextStyle(color = Mc.textPrimary, fontSize = 13.sp),
+                textStyle = TextStyle(
+                    color = sch.textPrimary,
+                    fontSize = 13.sp,
+                    shadow = sch.shadow
+                ),
                 cursorBrush = SolidColor(Mc.red),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { onSearch(query) }),
@@ -418,7 +532,7 @@ fun McSearchField(
                 Icon(
                     imageVector = Icons.Filled.Close,
                     contentDescription = "清空",
-                    tint = Mc.textTertiary,
+                    tint = if (sch.isCustom) sch.textTertiary else Mc.textTertiary,
                     modifier = Modifier.size(14.dp)
                 )
             }
@@ -428,9 +542,10 @@ fun McSearchField(
 
 // ==================== 空状态 ====================
 
-/** 列表空状态占位 */
+/** 列表空状态占位（自定义背景下文字颜色随明暗自适应） */
 @Composable
 fun McEmpty(text: String, modifier: Modifier = Modifier) {
+    val sch = LocalAdaptiveScheme.current
     Column(
         modifier = modifier.fillMaxWidth().padding(vertical = 48.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -438,24 +553,30 @@ fun McEmpty(text: String, modifier: Modifier = Modifier) {
         Icon(
             imageVector = Icons.Filled.MusicNote,
             contentDescription = null,
-            tint = Color(0xFFD9D9DF),
+            tint = if (sch.isCustom) sch.textTertiary else Color(0xFFD9D9DF),
             modifier = Modifier.size(44.dp)
         )
         Spacer(Modifier.height(10.dp))
-        Text(text = text, color = Mc.textTertiary, fontSize = 13.sp)
+        Text(
+            text = text,
+            color = if (sch.isCustom) sch.textSecondary else Mc.textTertiary,
+            fontSize = 13.sp,
+            style = TextStyle(shadow = sch.shadow)
+        )
     }
 }
 
 // ==================== 文本溢出省略 ====================
 
-/** 单行省略文本（列表行标题/歌手共用） */
+/** 单行省略文本（列表行标题/歌手共用；shadow = 自定义背景下的可读性光晕） */
 @Composable
 fun EllipsisText(
     text: String,
     fontSize: Int,
     color: Color,
     fontWeight: androidx.compose.ui.text.font.FontWeight? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    shadow: Shadow? = null
 ) {
     Text(
         text = text,
@@ -464,6 +585,7 @@ fun EllipsisText(
         fontWeight = fontWeight,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
+        style = TextStyle(shadow = shadow),
         modifier = modifier
     )
 }
@@ -471,12 +593,19 @@ fun EllipsisText(
 /** 滚动跑马灯文本（底栏歌名过长时滚动） */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun MarqueeText(text: String, fontSize: Int, color: Color, modifier: Modifier = Modifier) {
+fun MarqueeText(
+    text: String,
+    fontSize: Int,
+    color: Color,
+    modifier: Modifier = Modifier,
+    shadow: Shadow? = null
+) {
     Text(
         text = text,
         fontSize = fontSize.sp,
         color = color,
         maxLines = 1,
+        style = TextStyle(shadow = shadow),
         modifier = modifier.fillMaxWidth().basicMarquee()
     )
 }

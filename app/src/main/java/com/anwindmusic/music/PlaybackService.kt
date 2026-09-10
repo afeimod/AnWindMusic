@@ -23,6 +23,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 /**
  * 播放控制入口：起播时由播放器组合调用，拉起前台服务实现后台持续播放。
@@ -262,11 +263,16 @@ class PlaybackService : Service() {
 
     /**
      * 异步加载封面作通知大图（加载完成后再刷新一次通知）：
-     * 在线歌用网络封面；本地歌提取内嵌封面（LocalCover 磁盘缓存）；都无则无大图。
+     * v1.2：设置里自定义了封面图时优先使用（播放处统一：播放条/歌词页/通知/锁屏）；
+     * 否则在线歌用网络封面；本地歌提取内嵌封面（LocalCover 磁盘缓存）；都无则无大图。
      */
     private fun refreshLargeIcon(song: SongInfo?) {
+        val customCover = if (song == null) null else runCatching {
+            engine()?.store?.loadMusicSettings()?.coverImage
+        }.getOrNull()?.takeIf { it.isNotBlank() && File(it).isFile }
         val src = when {
             song == null -> null
+            customCover != null -> "custom:$customCover"
             !song.isLocal && song.picUrl.isNotBlank() -> song.picUrl
             else -> "local:${song.key}"   // 本地歌：内嵌封面（含提取失败后的空图）
         }
@@ -277,11 +283,15 @@ class PlaybackService : Service() {
                 null
             } else {
                 withContext(Dispatchers.IO) {
-                    if (!song.isLocal && song.picUrl.isNotBlank()) {
-                        runCatching { loadBitmap(song.picUrl, 512) }.getOrNull()
-                    } else {
-                        val path = LocalCover.extractCached(applicationContext, song)
-                        path?.let { runCatching { loadBitmap(it, 512) }.getOrNull() }
+                    when {
+                        customCover != null ->
+                            runCatching { loadBitmap(customCover, 512) }.getOrNull()
+                        !song.isLocal && song.picUrl.isNotBlank() ->
+                            runCatching { loadBitmap(song.picUrl, 512) }.getOrNull()
+                        else -> {
+                            val path = LocalCover.extractCached(applicationContext, song)
+                            path?.let { runCatching { loadBitmap(it, 512) }.getOrNull() }
+                        }
                     }
                 }
             }

@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -144,7 +145,7 @@ fun SettingsPage(
                     )
                 }
             }
-            Caption("背景全局生效：侧栏、底栏与设置卡片/选项/搜索框自动半透明融入；选深色时文字仍为深色，建议搭配浅色图片或低压暗")
+            Caption("背景全局生效：顶栏/播放条/底栏与设置卡片/选项/搜索框自动半透明融入；并按背景明暗动态切换深浅文字与光晕，任意壁纸文字都清晰可读（图片过暗时可调「图片压暗」）")
         }
 
         SettingsSection("歌词秀背景") {
@@ -256,7 +257,8 @@ fun SettingsPage(
             Text(
                 text = "当前行高亮颜色",
                 fontSize = 12.sp,
-                color = Mc.textSecondary,
+                color = LocalAdaptiveScheme.current.textSecondary,
+                style = TextStyle(shadow = LocalAdaptiveScheme.current.shadow),
                 modifier = Modifier.padding(top = 10.dp)
             )
             ColorSwatchRow(
@@ -334,7 +336,8 @@ fun SettingsPage(
                 Text(
                     text = "字体颜色",
                     fontSize = 12.sp,
-                    color = Mc.textSecondary,
+                    color = LocalAdaptiveScheme.current.textSecondary,
+                    style = TextStyle(shadow = LocalAdaptiveScheme.current.shadow),
                     modifier = Modifier.padding(top = 10.dp)
                 )
                 ColorSwatchRow(
@@ -436,6 +439,7 @@ fun SettingsPage(
                         fontSize = 13.sp,
                         color = Mc.red,
                         fontWeight = FontWeight.Medium,
+                        style = TextStyle(shadow = LocalAdaptiveScheme.current.shadow),
                         modifier = Modifier
                             .clip(RoundedCornerShape(6.dp))
                             .clickable(onClick = onPickFolder)
@@ -459,6 +463,7 @@ fun SettingsPage(
                     fontSize = 13.sp,
                     color = Mc.red,
                     fontWeight = FontWeight.Medium,
+                    style = TextStyle(shadow = LocalAdaptiveScheme.current.shadow),
                     modifier = Modifier
                         .clip(RoundedCornerShape(6.dp))
                         .clickable(onClick = onRescan)
@@ -493,19 +498,21 @@ fun SettingsPage(
 
 // ==================== 区块与通用控件 ====================
 
-/** 设置区块：标题 + 内容卡片 */
+/** 设置区块：标题 + 内容卡片（v1.2：标题与卡片随背景明暗自适应，标题叠加光晕） */
 @Composable
 private fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    val sch = LocalAdaptiveScheme.current
     Spacer(Modifier.height(10.dp))
     Text(
         text = title,
         fontSize = 13.sp,
         fontWeight = FontWeight.Bold,
-        color = Mc.textPrimary,
+        color = sch.textPrimary,
+        style = TextStyle(shadow = sch.shadow),
         modifier = Modifier.padding(start = 4.dp, bottom = 4.dp)
     )
-    // v2.21.5：自定义主页背景激活时区块卡片半透明融入；v1.1 降透至 55% 与顶/底栏一致
-    val cardBg = surfaceColor(Color.White, LocalHomeCustomBg.current, 0.55f)
+    // v1.2：自定义背景下区块卡片降透至 35%（白玻璃）/ 45%（黑玻璃），更轻薄通透
+    val cardBg = if (sch.isCustom) sch.glass else Color.White
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -517,14 +524,16 @@ private fun SettingsSection(title: String, content: @Composable ColumnScope.() -
     }
 }
 
-/** 说明性小字（自定义背景下加深，保证半透明卡片上可读） */
+/** 说明性小字（v1.2：自定义背景下颜色随明暗自适应 + 光晕） */
 @Composable
 private fun Caption(text: String) {
+    val sch = LocalAdaptiveScheme.current
     Text(
         text = text,
         fontSize = 10.sp,
         lineHeight = 15.sp,
-        color = if (LocalHomeCustomBg.current) Mc.textSecondary else Mc.textTertiary,
+        color = if (sch.isCustom) sch.textSecondary else Mc.textTertiary,
+        style = TextStyle(shadow = sch.shadow),
         modifier = Modifier.padding(top = 8.dp, start = 4.dp)
     )
 }
@@ -537,10 +546,10 @@ private fun ModeChipsRow(
     onSelect: (Int) -> Unit
 ) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        // v2.21.5：自定义主页背景激活时未选中芯片半透明融入（选中态保持实心红保证对比）；
-        // 自定义背景下芯片降透至 42%，文字加深保证可读
-        val chipBg = surfaceColor(Mc.searchFieldBg, LocalHomeCustomBg.current, 0.42f)
-        val chipText = if (LocalHomeCustomBg.current) Mc.textPrimary else Mc.textSecondary
+        // v1.2：自定义背景下芯片用小表面玻璃（42%/52%）+ 实心自适应文字 + 光晕；选中态保持实心红
+        val sch = LocalAdaptiveScheme.current
+        val chipBg = if (sch.isCustom) sch.glassField else Mc.searchFieldBg
+        val chipText = if (sch.isCustom) sch.textPrimary else Mc.textSecondary
         for ((value, label) in options) {
             val isSel = value == selected
             Text(
@@ -548,6 +557,7 @@ private fun ModeChipsRow(
                 fontSize = 12.sp,
                 color = if (isSel) Color.White else chipText,
                 fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                style = TextStyle(shadow = if (isSel) null else sch.shadow),
                 modifier = Modifier
                     .clip(RoundedCornerShape(14.dp))
                     .background(if (isSel) Mc.red else chipBg)
@@ -565,6 +575,7 @@ private fun ColorSwatchRow(colors: List<Color>, selected: Int, onSelect: (Int) -
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier.padding(top = 10.dp)
     ) {
+        val borderColor = LocalAdaptiveScheme.current.border
         for (c in colors) {
             val isSel = c.toArgb() == selected
             Box(
@@ -574,7 +585,7 @@ private fun ColorSwatchRow(colors: List<Color>, selected: Int, onSelect: (Int) -
                     .background(c)
                     .border(
                         width = if (isSel) 2.dp else 1.dp,
-                        color = if (isSel) Mc.red else Mc.divider,
+                        color = if (isSel) Mc.red else borderColor,
                         shape = CircleShape
                     )
                     .clickable { onSelect(c.toArgb()) }
@@ -594,6 +605,7 @@ private fun GradientSwatchRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier.padding(top = 10.dp)
     ) {
+        val borderColor = LocalAdaptiveScheme.current.border
         gradients.forEachIndexed { i, pair ->
             val isSel = i == selected
             Box(
@@ -603,7 +615,7 @@ private fun GradientSwatchRow(
                     .background(Brush.verticalGradient(pair))
                     .border(
                         width = if (isSel) 2.dp else 1.dp,
-                        color = if (isSel) Mc.red else Mc.divider,
+                        color = if (isSel) Mc.red else borderColor,
                         shape = RoundedCornerShape(13.dp)
                     )
                     .clickable { onSelect(i) }
@@ -612,7 +624,7 @@ private fun GradientSwatchRow(
     }
 }
 
-/** 图片选择行（选择/清除 + 状态说明） */
+/** 图片选择行（选择/清除 + 状态说明；v1.2 文字自适应+光晕） */
 @Composable
 private fun ImagePickRow(
     label: String,
@@ -620,6 +632,7 @@ private fun ImagePickRow(
     onPick: () -> Unit,
     onClear: () -> Unit
 ) {
+    val sch = LocalAdaptiveScheme.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.padding(top = 10.dp)
@@ -634,7 +647,8 @@ private fun ImagePickRow(
         Text(
             text = if (picked) "已选择$label（点击可更换）" else "点击选择$label",
             fontSize = 13.sp,
-            color = Mc.textPrimary,
+            color = sch.textPrimary,
+            style = TextStyle(shadow = sch.shadow),
             modifier = Modifier
                 .weight(1f)
                 .clip(RoundedCornerShape(6.dp))
@@ -648,7 +662,7 @@ private fun ImagePickRow(
                 Icon(
                     Icons.Filled.Close,
                     contentDescription = "清除",
-                    tint = Mc.textTertiary,
+                    tint = sch.textTertiary,
                     modifier = Modifier.size(14.dp)
                 )
             }
@@ -668,6 +682,7 @@ private fun SettingSlider(
 ) {
     var dragging by remember(value) { mutableStateOf(false) }
     var dragValue by remember { mutableStateOf(value) }
+    val sch = LocalAdaptiveScheme.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth()
@@ -675,7 +690,8 @@ private fun SettingSlider(
         Text(
             text = title,
             fontSize = 13.sp,
-            color = Mc.textPrimary,
+            color = sch.textPrimary,
+            style = TextStyle(shadow = sch.shadow),
             modifier = Modifier.width(150.dp)
         )
         Slider(
@@ -696,8 +712,8 @@ private fun SettingSlider(
             colors = SliderDefaults.colors(
                 thumbColor = Mc.red,
                 activeTrackColor = Mc.red,
-                // v2.21.5：未激活轨道随背景半透明（激活轨道保持实心红）
-                inactiveTrackColor = surfaceColor(Color(0xFFE5E5E8), LocalHomeCustomBg.current, 0.50f)
+                // v1.2：未激活轨道随明暗自适应（亮背景深色半透/暗背景白色半透）
+                inactiveTrackColor = if (sch.isCustom) sch.track else Color(0xFFE5E5E8)
             ),
             modifier = Modifier
                 .weight(1f)
@@ -706,14 +722,15 @@ private fun SettingSlider(
         Text(
             text = display,
             fontSize = 11.sp,
-            color = Mc.textSecondary,
+            color = sch.textSecondary,
+            style = TextStyle(shadow = sch.shadow),
             modifier = Modifier.width(58.dp),
             textAlign = androidx.compose.ui.text.style.TextAlign.Right
         )
     }
 }
 
-/** 开关设置行 */
+/** 开关设置行（v1.2 文字自适应+光晕） */
 @Composable
 private fun SettingSwitch(
     title: String,
@@ -721,9 +738,16 @@ private fun SettingSwitch(
     checked: Boolean,
     onChange: (Boolean) -> Unit
 ) {
+    val sch = LocalAdaptiveScheme.current
     Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(text = title, fontSize = 13.sp, color = Mc.textPrimary, modifier = Modifier.weight(1f))
+            Text(
+                text = title,
+                fontSize = 13.sp,
+                color = sch.textPrimary,
+                style = TextStyle(shadow = sch.shadow),
+                modifier = Modifier.weight(1f)
+            )
             Switch(
                 checked = checked,
                 onCheckedChange = onChange,
@@ -736,13 +760,19 @@ private fun SettingSwitch(
                 modifier = Modifier.height(24.dp)
             )
         }
-        Text(text = desc, fontSize = 10.sp, color = Mc.textTertiary)
+        Text(
+            text = desc,
+            fontSize = 10.sp,
+            color = if (sch.isCustom) sch.textTertiary else Mc.textTertiary,
+            style = TextStyle(shadow = sch.shadow)
+        )
     }
 }
 
-/** 词源单选行 */
+/** 词源单选行（v1.2 文字与描边自适应） */
 @Composable
 private fun EngineRadioRow(label: String, selected: Boolean, onClick: () -> Unit) {
+    val sch = LocalAdaptiveScheme.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -754,7 +784,7 @@ private fun EngineRadioRow(label: String, selected: Boolean, onClick: () -> Unit
             Modifier
                 .size(16.dp)
                 .clip(CircleShape)
-                .border(2.dp, if (selected) Mc.red else Mc.divider, CircleShape),
+                .border(2.dp, if (selected) Mc.red else sch.border, CircleShape),
             contentAlignment = Alignment.Center
         ) {
             if (selected) {
@@ -762,13 +792,19 @@ private fun EngineRadioRow(label: String, selected: Boolean, onClick: () -> Unit
             }
         }
         Spacer(Modifier.width(10.dp))
-        Text(text = label, fontSize = 13.sp, color = if (selected) Mc.red else Mc.textPrimary)
+        Text(
+            text = label,
+            fontSize = 13.sp,
+            color = if (selected) Mc.red else sch.textPrimary,
+            style = TextStyle(shadow = if (selected) null else sch.shadow)
+        )
     }
 }
 
-/** 已添加目录行 */
+/** 已添加目录行（v1.2 文字自适应） */
 @Composable
 private fun DirRow(path: String, onRemove: () -> Unit) {
+    val sch = LocalAdaptiveScheme.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -778,14 +814,14 @@ private fun DirRow(path: String, onRemove: () -> Unit) {
         Icon(
             Icons.Filled.Folder,
             contentDescription = null,
-            tint = Mc.textSecondary,
+            tint = sch.textSecondary,
             modifier = Modifier.size(14.dp)
         )
         Spacer(Modifier.width(8.dp))
         Text(
             text = path,
             fontSize = 11.sp,
-            color = Mc.textSecondary,
+            color = sch.textSecondary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
@@ -793,7 +829,7 @@ private fun DirRow(path: String, onRemove: () -> Unit) {
         Icon(
             Icons.Filled.Close,
             contentDescription = "移除目录",
-            tint = Mc.textTertiary,
+            tint = sch.textTertiary,
             modifier = Modifier
                 .size(14.dp)
                 .clickable(onClick = onRemove)
@@ -801,23 +837,28 @@ private fun DirRow(path: String, onRemove: () -> Unit) {
     }
 }
 
-/** 手动输入目录路径 */
+/** 手动输入目录路径（v1.2 输入框与文字自适应+光晕） */
 @Composable
 private fun ManualDirInput(onAdd: (String) -> Unit) {
     var text by remember { mutableStateOf("") }
-    // v2.21.5：自定义主页背景激活时输入框容器半透明融入
-    val fieldBg = surfaceColor(Mc.searchFieldBg, LocalHomeCustomBg.current, 0.42f)
+    val sch = LocalAdaptiveScheme.current
+    val fieldBg = if (sch.isCustom) sch.glassField else Mc.searchFieldBg
     Row(verticalAlignment = Alignment.CenterVertically) {
         TextField(
             value = text,
             onValueChange = { text = it },
             placeholder = {
-                Text("/storage/emulated/0/Music", fontSize = 11.sp, color = Mc.textTertiary)
+                Text(
+                    "/storage/emulated/0/Music",
+                    fontSize = 11.sp,
+                    color = if (sch.isCustom) sch.textTertiary else Mc.textTertiary
+                )
             },
             singleLine = true,
             textStyle = androidx.compose.ui.text.TextStyle(
                 fontSize = 12.sp,
-                color = Mc.textPrimary
+                color = sch.textPrimary,
+                shadow = sch.shadow
             ),
             colors = TextFieldDefaults.colors(
                 focusedContainerColor = fieldBg,

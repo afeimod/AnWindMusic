@@ -66,7 +66,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -210,15 +212,47 @@ fun MusicContent(
         if (mode == "image") onPickImage(kind) else onPickFolder()
     }
 
+    // ===== 动态清晰度（v1.2）：按自定义背景等效亮度切换全局明暗配色 =====
+    // 图片背景：降采样取样平均亮度并折算「图片压暗」滑条；纯色/渐变：直接取色亮度。
+    // 亮背景 → 深色文字+白玻璃+白柔光；暗背景 → 白色文字+黑玻璃+黑投影。
+    val homeCustomBg = musicSettings.homeBgMode != MusicSettings.HOME_BG_DEFAULT
+    var bgLuminance by remember { mutableStateOf<Float?>(null) }
+    LaunchedEffect(
+        musicSettings.homeBgMode,
+        musicSettings.homeBgImage,
+        musicSettings.homeBgColor,
+        musicSettings.homeBgGradient,
+        musicSettings.homeImageDim
+    ) {
+        bgLuminance = when (musicSettings.homeBgMode) {
+            MusicSettings.BG_IMAGE -> {
+                val path = musicSettings.homeBgImage
+                if (path.isNullOrEmpty()) null
+                else loadBackgroundBitmap(context, path, 64)?.averageLuminance()
+                    ?.let { (it * (1f - musicSettings.homeImageDim)).coerceIn(0f, 1f) }
+            }
+            MusicSettings.BG_SOLID -> Color(musicSettings.homeBgColor).luminance()
+            MusicSettings.BG_GRADIENT -> {
+                val pair = HomeBgGradients.getOrElse(musicSettings.homeBgGradient) { HomeBgGradients[0] }
+                (pair[0].luminance() + pair[1].luminance()) / 2f
+            }
+            else -> null
+        }
+    }
+    val scheme = remember(homeCustomBg, bgLuminance) { adaptiveScheme(homeCustomBg, bgLuminance) }
+    // 系统栏图标：自定义深色背景或歌词页 → 浅色图标；默认/浅色背景 → 深色图标
+    val lightSystemBars = !(scheme.isCustom && !scheme.isLight)
+
     // ===== 系统栏图标颜色适配 =====
-    // 主界面浅色背景 → 深色图标；歌词页深色背景（0xFF0B0B10）→ 浅色图标。
+    // 主界面默认/浅色背景 → 深色图标；自定义深色背景或歌词页（0xFF0B0B10）→ 浅色图标。
     // 真全屏模式下系统栏已隐藏，此设置仅在退出全屏/半屏歌词时生效。
-    DisposableEffect(showLyrics, isFullscreen) {
+    DisposableEffect(showLyrics, isFullscreen, lightSystemBars) {
         val window = (context as? Activity)?.window
         if (window != null) {
             val controller = WindowCompat.getInsetsController(window, window.decorView)
-            controller.isAppearanceLightStatusBars = !showLyrics
-            controller.isAppearanceLightNavigationBars = !showLyrics
+            val light = !showLyrics && lightSystemBars
+            controller.isAppearanceLightStatusBars = light
+            controller.isAppearanceLightNavigationBars = light
         }
         onDispose {
             // 离开组合时恢复浅色主题默认（深色图标）
@@ -388,7 +422,6 @@ fun MusicContent(
     BackHandler(enabled = showLyrics && isFullscreen) { onToggleFullscreen() }
 
     // ===== 布局：顶部栏 + 内容页（歌词页覆盖） + 播放条 + 底部导航 =====
-    val homeCustomBg = musicSettings.homeBgMode != MusicSettings.HOME_BG_DEFAULT
     val homeBgModifier = when (musicSettings.homeBgMode) {
         MusicSettings.BG_SOLID -> Modifier.background(Color(musicSettings.homeBgColor))
         MusicSettings.BG_GRADIENT -> {
@@ -398,8 +431,12 @@ fun MusicContent(
         MusicSettings.BG_IMAGE -> Modifier.background(Color.Transparent)
         else -> Modifier.background(Mc.bg)
     }
-    // 向全内容区提供自定义背景激活标记 —— 表面控件自动半透明融入
-    CompositionLocalProvider(LocalHomeCustomBg provides homeCustomBg) {
+    // 向全内容区提供自定义背景激活标记与动态清晰度配色方案
+    // （表面控件自动半透明融入背景；文字按背景明暗自适应颜色+光晕）
+    CompositionLocalProvider(
+        LocalHomeCustomBg provides homeCustomBg,
+        LocalAdaptiveScheme provides scheme
+    ) {
         // imePadding：edge-to-edge 下键盘不挤压窗口（API 30+），由 insets 把整体抬到键盘上方；
         // API 24-29 的 adjustResize 窗口缩放路径下 ime insets 为 0，此修饰符自动无操作
         Box(Modifier.fillMaxSize().imePadding()) {
@@ -419,7 +456,6 @@ fun MusicContent(
             ) {
                 if (!showLyrics) {
                     MusicTopBar(
-                        customBg = homeCustomBg,
                         onSettings = { page = Page.SETTINGS }
                     )
                 }
@@ -577,7 +613,8 @@ fun MusicContent(
                     PlayerBarMobile(
                         engine = engine,
                         isFav = engine.currentSong?.let { favKeys.contains(it.key) } ?: false,
-                        customBg = homeCustomBg,
+                        // v1.2：设置里自定义了封面图时，播放处优先显示该封面（与歌词页/通知一致）
+                        coverOverride = musicSettings.coverImage,
                         onToggleFav = {
                             engine.currentSong?.let { song ->
                                 engine.store.toggleFavorite(song)
@@ -589,8 +626,7 @@ fun MusicContent(
                     )
                     MusicBottomNav(
                         page = page,
-                        onPageChange = { page = it },
-                        customBg = homeCustomBg
+                        onPageChange = { page = it }
                     )
                 }
             }
@@ -601,11 +637,13 @@ fun MusicContent(
 // ==================== 顶部标题栏 ====================
 
 @Composable
-private fun MusicTopBar(customBg: Boolean, onSettings: () -> Unit) {
+private fun MusicTopBar(onSettings: () -> Unit) {
+    // v1.2：自定义背景时顶栏降透至 35%（白玻璃）/ 45%（黑玻璃），文字随明暗自适应
+    val sch = LocalAdaptiveScheme.current
     Row(
         Modifier
             .fillMaxWidth()
-            .background(if (customBg) Color.White.copy(alpha = 0.55f) else Mc.sidebarBg)
+            .background(if (sch.isCustom) sch.glass else Mc.sidebarBg)
             // 状态栏/刘海区域由本栏背景延伸填充（edge-to-edge），内容避让到状态栏下方
             .statusBarsPadding()
             .padding(horizontal = 14.dp, vertical = 8.dp),
@@ -631,14 +669,15 @@ private fun MusicTopBar(customBg: Boolean, onSettings: () -> Unit) {
             text = "AnWind 云音乐",
             fontSize = 15.sp,
             fontWeight = FontWeight.Bold,
-            color = Mc.textPrimary,
+            color = sch.textPrimary,
+            style = TextStyle(shadow = sch.shadow),
             maxLines = 1
         )
         Spacer(Modifier.weight(1f))
         Icon(
             Icons.Filled.Settings,
             contentDescription = "设置",
-            tint = if (customBg) Mc.textPrimary else Mc.textSecondary,
+            tint = if (sch.isCustom) sch.textPrimary else Mc.textSecondary,
             modifier = Modifier
                 .size(20.dp)
                 .clip(RoundedCornerShape(6.dp))
@@ -651,13 +690,15 @@ private fun MusicTopBar(customBg: Boolean, onSettings: () -> Unit) {
 // ==================== 底部导航栏 ====================
 
 @Composable
-private fun MusicBottomNav(page: Page, onPageChange: (Page) -> Unit, customBg: Boolean) {
+private fun MusicBottomNav(page: Page, onPageChange: (Page) -> Unit) {
+    // v1.2：自定义背景时底栏降透且颜色随明暗自适应（白玻璃/黑玻璃）
+    val sch = LocalAdaptiveScheme.current
     HorizontalDivider(
         thickness = 0.5.dp,
-        color = if (customBg) Color.White.copy(alpha = 0.45f) else Mc.divider
+        color = if (sch.isCustom) sch.divider else Mc.divider
     )
     NavigationBar(
-        containerColor = if (customBg) Color.White.copy(alpha = 0.55f) else Color.White,
+        containerColor = if (sch.isCustom) sch.glass else Color.White,
         tonalElevation = 0.dp
     ) {
         val items = listOf(
@@ -672,13 +713,13 @@ private fun MusicBottomNav(page: Page, onPageChange: (Page) -> Unit, customBg: B
                 selected = page == p,
                 onClick = { onPageChange(p) },
                 icon = { Icon(icon, contentDescription = p.label, modifier = Modifier.size(22.dp)) },
-                label = { Text(p.label, fontSize = 10.sp) },
+                label = { Text(p.label, fontSize = 10.sp, style = TextStyle(shadow = sch.shadow)) },
                 colors = NavigationBarItemDefaults.colors(
                     selectedIconColor = Mc.red,
                     selectedTextColor = Mc.red,
-                    // 自定义背景下底栏更透：未选中图标/文字加深保证可读性
-                    unselectedIconColor = if (customBg) Mc.textPrimary else Mc.textSecondary,
-                    unselectedTextColor = if (customBg) Mc.textPrimary else Mc.textSecondary,
+                    // 自定义背景下未选中图标/文字实心自适应色，保证可读
+                    unselectedIconColor = sch.textSecondary,
+                    unselectedTextColor = sch.textSecondary,
                     indicatorColor = Color(0x1AEC4141)
                 )
             )
@@ -692,20 +733,22 @@ private fun MusicBottomNav(page: Page, onPageChange: (Page) -> Unit, customBg: B
 private fun PlayerBarMobile(
     engine: MusicEngine,
     isFav: Boolean,
-    customBg: Boolean,
+    /** v1.2：设置里自定义的封面图（非空时播放处直接显示它，不再回落歌曲封面/默认封面） */
+    coverOverride: String?,
     onToggleFav: () -> Unit,
     lyricsOpen: Boolean,
     onToggleLyrics: () -> Unit
 ) {
     val song = engine.currentSong
+    // v1.2：自定义背景时播放条降透至 35%（白玻璃）/ 45%（黑玻璃），文字自适应+光晕
+    val sch = LocalAdaptiveScheme.current
     var userSeeking by remember { mutableStateOf(false) }
     var seekPos by remember { mutableStateOf(0f) }
 
     Column(
         Modifier
             .fillMaxWidth()
-            // 自定义主页背景时底栏半透明白（降透 55%），让背景全局透出
-            .background(if (customBg) Color.White.copy(alpha = 0.55f) else Color.White)
+            .background(if (sch.isCustom) sch.glass else Color.White)
             .padding(top = 4.dp)
     ) {
         // 进度条（细线，红色）
@@ -718,7 +761,8 @@ private fun PlayerBarMobile(
             Text(
                 text = fmtTime(if (userSeeking) seekPos.toLong() else engine.positionMs),
                 fontSize = 10.sp,
-                color = Mc.textTertiary
+                color = if (sch.isCustom) sch.textTertiary else Mc.textTertiary,
+                style = TextStyle(shadow = sch.shadow)
             )
             Slider(
                 value = if (userSeeking) seekPos else {
@@ -736,7 +780,7 @@ private fun PlayerBarMobile(
                 colors = SliderDefaults.colors(
                     thumbColor = Mc.red,
                     activeTrackColor = Mc.red,
-                    inactiveTrackColor = Color(0xFFE5E5E8)
+                    inactiveTrackColor = if (sch.isCustom) sch.track else Color(0xFFE5E5E8)
                 ),
                 modifier = Modifier
                     .weight(1f)
@@ -746,7 +790,8 @@ private fun PlayerBarMobile(
             Text(
                 text = fmtTime(engine.durationMs),
                 fontSize = 10.sp,
-                color = Mc.textTertiary
+                color = if (sch.isCustom) sch.textTertiary else Mc.textTertiary,
+                style = TextStyle(shadow = sch.shadow)
             )
         }
 
@@ -763,7 +808,12 @@ private fun PlayerBarMobile(
                     .clip(RoundedCornerShape(5.dp))
                     .clickable(onClick = onToggleLyrics)
             ) {
-                AsyncCover(song = song, modifier = Modifier.size(40.dp))
+                if (!coverOverride.isNullOrEmpty()) {
+                    // v1.2：设置里自定义了封面图 → 播放处直接显示它（与歌词页封面/通知大图一致）
+                    BgImage(coverOverride, Modifier.size(40.dp))
+                } else {
+                    AsyncCover(song = song, modifier = Modifier.size(40.dp))
+                }
             }
             Spacer(Modifier.width(10.dp))
             Column(
@@ -774,14 +824,16 @@ private fun PlayerBarMobile(
                     text = song?.name ?: "未在播放",
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
-                    color = Mc.textPrimary,
+                    color = if (sch.isCustom) sch.textPrimary else Mc.textPrimary,
+                    style = TextStyle(shadow = sch.shadow),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = song?.let { "${it.artist} · ${it.album.ifBlank { "未知专辑" }}" } ?: "云音乐，发现好音乐",
                     fontSize = 10.sp,
-                    color = Mc.textTertiary,
+                    color = if (sch.isCustom) sch.textTertiary else Mc.textTertiary,
+                    style = TextStyle(shadow = sch.shadow),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -800,7 +852,9 @@ private fun PlayerBarMobile(
                     text = "词",
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
-                    color = if (lyricsOpen) Color.White else Mc.textSecondary
+                    color = if (lyricsOpen) Color.White
+                            else if (sch.isCustom) sch.textSecondary else Mc.textSecondary,
+                    style = TextStyle(shadow = if (lyricsOpen) null else sch.shadow)
                 )
             }
             Spacer(Modifier.width(12.dp))
@@ -813,7 +867,7 @@ private fun PlayerBarMobile(
                     else -> Icons.Filled.Repeat
                 },
                 contentDescription = "播放模式",
-                tint = Mc.textSecondary,
+                tint = if (sch.isCustom) sch.textSecondary else Mc.textSecondary,
                 modifier = Modifier
                     .size(17.dp)
                     .clickable { engine.cycleMode() }
@@ -824,7 +878,8 @@ private fun PlayerBarMobile(
             Icon(
                 imageVector = if (isFav) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
                 contentDescription = "喜欢",
-                tint = if (isFav) Mc.red else Mc.textSecondary,
+                tint = if (isFav) Mc.red
+                       else if (sch.isCustom) sch.textSecondary else Mc.textSecondary,
                 modifier = Modifier
                     .size(18.dp)
                     .clickable(onClick = onToggleFav)
@@ -844,7 +899,7 @@ private fun PlayerBarMobile(
                     Icon(
                         Icons.Filled.SkipPrevious,
                         contentDescription = "上一首",
-                        tint = Mc.textPrimary,
+                        tint = if (sch.isCustom) sch.textPrimary else Mc.textPrimary,
                         modifier = Modifier
                             .size(24.dp)
                             .clickable { engine.prev() }
@@ -877,7 +932,7 @@ private fun PlayerBarMobile(
                     Icon(
                         Icons.Filled.SkipNext,
                         contentDescription = "下一首",
-                        tint = Mc.textPrimary,
+                        tint = if (sch.isCustom) sch.textPrimary else Mc.textPrimary,
                         modifier = Modifier
                             .size(24.dp)
                             .clickable { engine.next() }
@@ -889,7 +944,7 @@ private fun PlayerBarMobile(
             Icon(
                 Icons.AutoMirrored.Filled.VolumeUp,
                 contentDescription = "音量",
-                tint = Mc.textSecondary,
+                tint = if (sch.isCustom) sch.textSecondary else Mc.textSecondary,
                 modifier = Modifier.size(16.dp)
             )
             Slider(
@@ -897,9 +952,9 @@ private fun PlayerBarMobile(
                 valueRange = 0f..1f,
                 onValueChange = { engine.volume = it },
                 colors = SliderDefaults.colors(
-                    thumbColor = Mc.textSecondary,
-                    activeTrackColor = Mc.textSecondary,
-                    inactiveTrackColor = Color(0xFFE5E5E8)
+                    thumbColor = if (sch.isCustom) sch.textSecondary else Mc.textSecondary,
+                    activeTrackColor = if (sch.isCustom) sch.textSecondary else Mc.textSecondary,
+                    inactiveTrackColor = if (sch.isCustom) sch.track else Color(0xFFE5E5E8)
                 ),
                 modifier = Modifier
                     .width(84.dp)
