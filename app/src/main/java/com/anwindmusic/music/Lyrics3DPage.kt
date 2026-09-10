@@ -3,6 +3,7 @@ package com.anwindmusic.music
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
@@ -390,9 +391,10 @@ fun Lyrics3DPage(
 
 // ==================== 封面 + 旋转 CD ====================
 
-/** v2.22：唱片旋转角共享动画 —— 播放时 8s/圈匀速旋转，暂停停在当前角度 */
+/** v2.22：唱片旋转角共享动画 —— 播放时 8s/圈匀速旋转，暂停停在当前角度。
+ *  返回 Animatable（本 Compose 版本未实现 State 接口，调用方取 .value） */
 @Composable
-private fun rememberSpinAngle(isPlaying: Boolean): State<Float> {
+private fun rememberSpinAngle(isPlaying: Boolean): Animatable<Float, AnimationVector1D> {
     val angle = remember { Animatable(0f) }
     LaunchedEffect(isPlaying) {
         if (isPlaying) {
@@ -613,7 +615,16 @@ private fun VinylBody(
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(modifier) {
+        // maxWidth/maxHeight 只能在 BoxWithConstraintsScope 直接作用域内读取，
+        // 嵌套 Row/Column composable lambda 里经隐式接收器访问会被编译器拒绝，
+        // 故所有尺寸先在此算好局部值再进嵌套作用域
         val landscape = maxWidth >= maxHeight
+        // 横屏：唱片区宽度 / 唱片直径
+        val discBoxW = (maxHeight * 0.70f).coerceAtMost(310.dp)
+        val discSizeL = (maxHeight * 0.62f).coerceAtMost(284.dp)
+        // 竖屏：唱片区高度 / 唱片直径
+        val discBoxH = (maxWidth * 0.78f).coerceAtMost(280.dp)
+        val discSizeP = (maxWidth * 0.62f).coerceAtMost(236.dp)
         if (landscape) {
             Row(
                 Modifier.fillMaxSize().padding(horizontal = 20.dp),
@@ -635,7 +646,7 @@ private fun VinylBody(
                 Box(
                     Modifier
                         .fillMaxHeight()
-                        .width((maxHeight * 0.70f).coerceAtMost(310.dp)),
+                        .width(discBoxW),
                     contentAlignment = Alignment.Center
                 ) {
                     VinylDiscUnit(
@@ -644,7 +655,7 @@ private fun VinylBody(
                         customDisc = customDisc,
                         isPlaying = isPlaying,
                         onToggleStyle = onToggleStyle,
-                        discSize = (maxHeight * 0.62f).coerceAtMost(284.dp)
+                        discSize = discSizeL
                     )
                 }
             }
@@ -654,7 +665,7 @@ private fun VinylBody(
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .height((maxWidth * 0.78f).coerceAtMost(280.dp)),
+                        .height(discBoxH),
                     contentAlignment = Alignment.Center
                 ) {
                     VinylDiscUnit(
@@ -663,7 +674,7 @@ private fun VinylBody(
                         customDisc = customDisc,
                         isPlaying = isPlaying,
                         onToggleStyle = onToggleStyle,
-                        discSize = (maxWidth * 0.62f).coerceAtMost(236.dp)
+                        discSize = discSizeP
                     )
                 }
                 Box(Modifier.weight(1f).fillMaxWidth()) {
