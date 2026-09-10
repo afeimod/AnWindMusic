@@ -45,6 +45,8 @@ object PlaybackServiceController {
  * - mediaPlayback 前台服务：退后台/锁屏后播放不中断（进程保活）
  * - 通知栏控制：上一首 / 播放暂停 / 下一首 / 退出（MediaStyle 大字体样式）
  * - MediaSessionCompat：锁屏控制、耳机/蓝牙线控（媒体按键）
+ * - 媒体元数据同步：时长（prepare 完成回填后刷新）+ 封面位图（ALBUM_ART），
+ *   驱动系统媒体卡片/锁屏的进度条走动与封面模糊背景
  * - 500ms 轮询引擎状态刷新通知（歌名/封面/播放态变化才重建通知，避免闪烁）
  * - 「退出」动作：停播并释放引擎（进度已由引擎会话记忆落盘）、关闭桌面歌词、移除通知
  *
@@ -71,12 +73,15 @@ class PlaybackService : Service() {
     /** 通知增量刷新依据：歌名 / 播放态 / 封面源变化才重建通知 */
     private var lastNotifKey: String = ""
     private var lastMetaKey: String? = null
+    private var lastMetaDuration: Long = -1L
+    private var lastMetaIcon: Bitmap? = null
     private var largeIcon: Bitmap? = null
     private var lastCoverSrc: String? = null
 
     private val tick = object : Runnable {
         override fun run() {
             updateSessionState()
+            updateMetadata()
             updateNotification()
             handler.postDelayed(this, POLL_MS)
         }
@@ -136,7 +141,7 @@ class PlaybackService : Service() {
         }
     }
 
-    /** 每次轮询同步播放态（锁屏进度条/按钮态、媒体按键路由） */
+    /** 每次轮询同步播放态（位置/速度持续更新，锁屏与媒体卡片进度条据此走动） */
     private fun updateSessionState() {
         val e = engine() ?: return
         val state = when {
@@ -157,19 +162,33 @@ class PlaybackService : Service() {
                 .setState(state, e.rawPositionMs(), if (e.isPlaying) 1f else 0f)
                 .build()
         )
-        val song = e.currentSong
-        // MediaSessionCompat 无 getMetadata：用本地 lastMetaKey 判断歌曲变化
-        if (song != null && song.key != lastMetaKey) {
-            lastMetaKey = song.key
-            session.setMetadata(
-                MediaMetadataCompat.Builder()
-                    .putString(MediaMetadataCompat.METADATA_KEY_TITLE, song.name)
-                    .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, song.artist)
-                    .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, song.album)
-                    .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, e.durationMs)
-                    .build()
-            )
-        }
+    }
+
+    /**
+     * 同步媒体元数据（修复状态栏媒体卡片进度条 00:00 不动、卡片无封面背景）：
+     * - 旧版只在切歌瞬间写一次 metadata，此刻引擎往往尚未 prepare 完成（durationMs=0，
+     *   聚合源歌曲本身也无时长元数据），prepare 回填真实时长后不再刷新 → 系统媒体卡片
+     *   拿到的时长恒为 0，进度条显示 00:00/00:00 且不走动。现按「切歌 / 时长变化 /
+     *   通知大图加载完成」三个时机刷新（MediaSessionCompat 无 getMetadata，
+     *   仍用本地 lastMetaKey/lastMetaDuration/lastMetaIcon 三元组做增量判断）
+     * - 封面位图写入 METADATA_KEY_ALBUM_ART：系统媒体卡片与锁屏据此渲染封面及
+     *   模糊背景、提取卡片配色（旧版 metadata 不带封面，卡片只能是白底）
+     */
+    private fun updateMetadata() {
+        val e = engine() ?: return
+        val song = e.currentSong ?: return
+        val icon = largeIcon
+        if (song.key == lastMetaKey && e.durationMs == lastMetaDuration && icon === lastMetaIcon) return
+        lastMetaKey = song.key
+        lastMetaDuration = e.durationMs
+        lastMetaIcon = icon
+        val meta = MediaMetadataCompat.Builder()
+            .putString(MediaMetadataCompat.METADATA_KEY_TITLE, song.name)
+            .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, song.artist)
+            .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, song.album)
+            .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, e.durationMs)
+        icon?.let { meta.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, it) }
+        session.setMetadata(meta.build())
     }
 
     // ==================== 通知 ====================
