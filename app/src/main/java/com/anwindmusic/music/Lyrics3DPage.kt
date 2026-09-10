@@ -52,6 +52,7 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,16 +63,20 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -80,6 +85,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -97,6 +103,11 @@ import kotlin.math.roundToInt
  *   「左右字体差」行内逐字字号渐变（行首小行尾大，v2.21.1 重做，替换行级 rotationY）；
  *   当前行支持高亮颜色与 KTV 渐进填色（按播放进度从左向右扫开）
  * - 左上角《歌名》— 歌手标题，右下角模式/上一首/播放/下一首/歌词下载控制
+ *
+ * v2.22 歌词秀双界面（点击封面/唱片互切，样式持久化）：
+ * - ① 3D 歌词墙：封面与光盘嵌合 —— 光盘中心正好压在封面右边缘，仅探出右半圆；
+ * - ② 黑胶唱片机（对照新参考图）：左侧平滑歌词 + 右侧旋转黑胶（封面做中心标贴）
+ *   + 唱针臂（播放搭在纹路上/暂停抬起），点击唱片切回 3D 墙
  *
  * v2.19 设置即时生效机制保留：组合期在自身作用域直读快照 State（settingsProvider()），
  * 滑条一变直接失效重组/重绘，不依赖参数链传递。
@@ -122,6 +133,8 @@ fun Lyrics3DPage(
     onCycleMode: () -> Unit,
     onDownloadLyric: () -> Unit,
     onClose: () -> Unit,
+    /** v2.22：设置更新回调 —— 歌词秀双界面切换后经此持久化 */
+    onUpdateSettings: (MusicSettings) -> Unit = {},
     /** v2.21.3：所在窗口是否处于真全屏（控制按钮图标切换） */
     isTrueFullscreen: Boolean = false,
     /** v2.21.3：全屏按钮回调 —— 切换窗口真全屏，返回键恢复 */
@@ -130,6 +143,17 @@ fun Lyrics3DPage(
 ) {
     // 组合期读取：背景模式等参与重组的设置（v2.19：所在作用域直读快照 State）
     val settings = settingsProvider()
+
+    // v2.22：歌词秀双界面 —— 0 = 3D 歌词墙（封面嵌合 CD），1 = 黑胶唱片机；
+    // 点击封面/唱片互切并经 updateSettings 持久化（即改即生效，重启保留）
+    val vinylStyle = settings.lyricStyle == MusicSettings.LYRIC_STYLE_VINYL
+    val toggleStyle: () -> Unit = {
+        val next = if (settingsProvider().lyricStyle == MusicSettings.LYRIC_STYLE_VINYL)
+            MusicSettings.LYRIC_STYLE_WALL
+        else
+            MusicSettings.LYRIC_STYLE_VINYL
+        onUpdateSettings(settingsProvider().copy(lyricStyle = next))
+    }
 
     // ===== 封面源解析（独立版新增）：在线网络封面 / 本地内嵌封面，无图回落默认封面 =====
     val coverContext = LocalContext.current
@@ -269,59 +293,79 @@ fun Lyrics3DPage(
                 }
             }
 
-            // ---- 主体：左封面+CD / 右 3D 歌词墙 ----
-            Row(
-                Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // 左：封面 + 旋转CD（占 38%）
-                Box(
+            // ---- 主体：v2.22 歌词秀双界面 —— 3D 歌词墙 / 黑胶唱片机 ----
+            if (vinylStyle) {
+                // 黑胶唱片机（对照参考图2）：左歌词 + 右旋转黑胶 + 唱针，点击唱片切回 3D 墙
+                VinylBody(
+                    coverUrl = coverSrc,
+                    customCover = settings.coverImage,
+                    customDisc = settings.discImage,
+                    isPlaying = isPlaying,
+                    lyric = lyric,
+                    lyricLoading = lyricLoading,
+                    positionMs = positionMs,
+                    settingsProvider = settingsProvider,
+                    positionProvider = positionProvider,
+                    onSeek = onSeek,
+                    onToggleStyle = toggleStyle,
+                    modifier = Modifier.weight(1f).fillMaxWidth()
+                )
+            } else {
+                // 3D 歌词墙：左封面+CD / 右 3D 歌词墙
+                Row(
                     Modifier
-                        .fillMaxHeight()
-                        .weight(0.38f),
-                    contentAlignment = Alignment.Center
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    CoverWithDisc(
-                        coverUrl = coverSrc,
-                        customCover = settings.coverImage,
-                        customDisc = settings.discImage,
-                        isPlaying = isPlaying
-                    )
-                }
-
-                // 右：3D 歌词墙（占 62%）
-                Box(Modifier.weight(0.62f).fillMaxHeight()) {
-                    if (lyric != null && lyric.lines.isNotEmpty()) {
-                        LyricsWall(
-                            doc = lyric,
-                            positionMs = positionMs,
-                            settingsProvider = settingsProvider,
-                            positionProvider = positionProvider,
-                            onSeek = onSeek,
-                            modifier = Modifier.fillMaxSize()
+                    // 左：封面 + 旋转CD（嵌合，占 38%）
+                    Box(
+                        Modifier
+                            .fillMaxHeight()
+                            .weight(0.38f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CoverWithDisc(
+                            coverUrl = coverSrc,
+                            customCover = settings.coverImage,
+                            customDisc = settings.discImage,
+                            isPlaying = isPlaying,
+                            onSwitchStyle = toggleStyle
                         )
-                    } else {
-                        Column(
-                            Modifier.fillMaxSize(),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            if (lyricLoading) {
-                                CircularProgressIndicator(
-                                    color = Color.White.copy(alpha = 0.6f),
-                                    strokeWidth = 2.dp,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                                Spacer(Modifier.height(10.dp))
-                            }
-                            Text(
-                                text = if (lyricLoading) "正在获取歌词…" else "暂无歌词，请欣赏",
-                                color = Color.White.copy(alpha = 0.5f),
-                                fontSize = 14.sp
+                    }
+
+                    // 右：3D 歌词墙（占 62%）
+                    Box(Modifier.weight(0.62f).fillMaxHeight()) {
+                        if (lyric != null && lyric.lines.isNotEmpty()) {
+                            LyricsWall(
+                                doc = lyric,
+                                positionMs = positionMs,
+                                settingsProvider = settingsProvider,
+                                positionProvider = positionProvider,
+                                onSeek = onSeek,
+                                modifier = Modifier.fillMaxSize()
                             )
+                        } else {
+                            Column(
+                                Modifier.fillMaxSize(),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                if (lyricLoading) {
+                                    CircularProgressIndicator(
+                                        color = Color.White.copy(alpha = 0.6f),
+                                        strokeWidth = 2.dp,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                    Spacer(Modifier.height(10.dp))
+                                }
+                                Text(
+                                    text = if (lyricLoading) "正在获取歌词…" else "暂无歌词，请欣赏",
+                                    color = Color.White.copy(alpha = 0.5f),
+                                    fontSize = 14.sp
+                                )
+                            }
                         }
                     }
                 }
@@ -346,75 +390,103 @@ fun Lyrics3DPage(
 
 // ==================== 封面 + 旋转 CD ====================
 
+/** v2.22：唱片旋转角共享动画 —— 播放时 8s/圈匀速旋转，暂停停在当前角度 */
 @Composable
-private fun CoverWithDisc(
-    coverUrl: String?,
-    customCover: String?,
-    customDisc: String?,
-    isPlaying: Boolean
-) {
-    val cdAngle = remember { Animatable(0f) }
+private fun rememberSpinAngle(isPlaying: Boolean): State<Float> {
+    val angle = remember { Animatable(0f) }
     LaunchedEffect(isPlaying) {
-        // 播放时持续旋转（8s/圈），暂停时停在当前角度
         if (isPlaying) {
             while (true) {
-                cdAngle.animateTo(
-                    cdAngle.value + 360f,
+                angle.animateTo(
+                    angle.value + 360f,
                     tween(8000, easing = LinearEasing)
                 )
-                if (cdAngle.value >= Float.MAX_VALUE / 4f) break
+                if (angle.value >= Float.MAX_VALUE / 4f) break
             }
         }
     }
+    return angle
+}
 
-    // v2.21：盘面图优先级 —— 自定义光盘图片 > 自定义封面图片 > 歌曲封面（在线网络/本地内嵌） > 默认封面
-    // v2.20.3：与 AsyncCover 共用 CoverCache（同 URL 只下载一次）
+/**
+ * v2.22：盘面图解析共享 —— 自定义光盘图片 > 自定义封面图片 > 歌曲封面
+ * （在线网络/本地内嵌） > 默认封面；3D 墙 CD 与黑胶唱片机共用（v2.20.3 起
+ * 与 AsyncCover 共用 CoverCache，同 URL 只下载一次）。
+ */
+@Composable
+private fun rememberDiscArtwork(coverUrl: String?, discSrc: String?): State<Bitmap?> {
     val context = LocalContext.current
-    val discSrc = customDisc ?: customCover
-    var discBmp by remember(coverUrl, discSrc) { mutableStateOf<Bitmap?>(null) }
+    val bmp = remember(coverUrl, discSrc) { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(coverUrl, discSrc) {
         if (!discSrc.isNullOrEmpty()) {
-            discBmp = loadBackgroundBitmap(context, discSrc, 600)
+            bmp.value = loadBackgroundBitmap(context, discSrc, 600)
         } else if (coverUrl.isNullOrEmpty()) {
             // 无任何封面：默认盘面用极简默认封面图（与占位封面/背景同图）
-            discBmp = runCatching {
+            bmp.value = runCatching {
                 BitmapFactory.decodeResource(context.resources, R.drawable.default_cover)
             }.getOrNull()
         } else if (!CoverCache.isResolved(coverUrl)) {
             val loaded = loadBitmap(coverUrl)
             CoverCache.put(coverUrl, loaded)
-            discBmp = loaded
+            bmp.value = loaded
         } else {
-            discBmp = CoverCache.get(coverUrl)
+            bmp.value = CoverCache.get(coverUrl)
         }
     }
+    return bmp
+}
 
-    Box(contentAlignment = Alignment.Center) {
-        // CD 光盘：在封面右后方，盘面探出约 2/3 半径（对照参考图3）
-        DiscCanvas(
-            angle = cdAngle.value,
-            cover = discBmp,
+@Composable
+private fun CoverWithDisc(
+    coverUrl: String?,
+    customCover: String?,
+    customDisc: String?,
+    isPlaying: Boolean,
+    /** v2.22：点击封面/光盘切到黑胶唱片机界面 */
+    onSwitchStyle: () -> Unit
+) {
+    val cdAngle = rememberSpinAngle(isPlaying)
+    val discBmp = rememberDiscArtwork(coverUrl, customDisc ?: customCover)
+
+    // v2.22 嵌合式封面+光盘（对照新参考）：光盘中心正好落在封面右边缘上，
+    // 仅探出右半圆 —— 相比旧版（中心在封面内侧 29dp）整体外拉、嵌为一体；
+    // 整体（封面 190 + 光盘探出 89 ≈ 279dp）超宽时按容器宽等比缩小防溢出
+    BoxWithConstraints(contentAlignment = Alignment.Center) {
+        val fit = (maxWidth.value / 288f).coerceIn(0.60f, 1f)
+        Box(
+            contentAlignment = Alignment.Center,
             modifier = Modifier
-                .size(178.dp)
-                .offset(x = 66.dp)
-        )
-        // 封面卡片（CD 左侧，压在光盘上）：v2.21 自定义封面图片优先
-        if (!customCover.isNullOrEmpty()) {
-            BgImage(
-                customCover,
-                Modifier
-                    .size(190.dp)
-                    .shadow(18.dp, RoundedCornerShape(12.dp))
-                    .clip(RoundedCornerShape(12.dp))
-            )
-        } else {
-            AsyncCover(
-                url = coverUrl,
+                .graphicsLayer { scaleX = fit; scaleY = fit }
+                // 整体视觉重心居中：嵌合体外探 89dp，回拉约半探出量
+                .offset(x = (-44).dp * fit)
+                .clickable(onClick = onSwitchStyle)
+        ) {
+            // 光盘在下层：offset 95dp = 封面半宽，即盘心压在封面右边缘
+            DiscCanvas(
+                angle = cdAngle.value,
+                cover = discBmp.value,
                 modifier = Modifier
-                    .size(190.dp)
-                    .shadow(18.dp, RoundedCornerShape(12.dp))
-                    .clip(RoundedCornerShape(12.dp))
+                    .size(178.dp)
+                    .offset(x = 95.dp)
             )
+            // 封面卡片（压在光盘上）：v2.21 自定义封面图片优先
+            if (!customCover.isNullOrEmpty()) {
+                BgImage(
+                    customCover,
+                    Modifier
+                        .size(190.dp)
+                        .shadow(18.dp, RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(12.dp))
+                )
+            } else {
+                AsyncCover(
+                    url = coverUrl,
+                    modifier = Modifier
+                        .size(190.dp)
+                        .shadow(18.dp, RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(12.dp))
+                )
+            }
         }
     }
 }
@@ -512,6 +584,398 @@ private fun DiscCanvas(angle: Float, cover: Bitmap?, modifier: Modifier = Modifi
             radius = r,
             center = center,
             style = Stroke(width = 1.dp.toPx())
+        )
+    }
+}
+
+// ==================== v2.22 黑胶唱片机界面 ====================
+
+/**
+ * 黑胶唱片机样式歌词页（对照参考图2）：
+ * - 横屏：左侧平滑滚动歌词 + 右侧旋转黑胶；竖屏：唱片在上、歌词在下（自适应布局）
+ * - 唱片：黑胶盘面（同心唱纹 + 扫掠高光）+ 专辑封面做中心标贴，播放旋转/暂停停住
+ * - 唱针臂：右上角轴承 + 银色针臂 + 唱头，播放时搭在盘面纹路上，暂停时向外抬起
+ * - 点击唱片切回 3D 歌词墙界面（toggleStyle，样式经设置持久化）
+ */
+@Composable
+private fun VinylBody(
+    coverUrl: String?,
+    customCover: String?,
+    customDisc: String?,
+    isPlaying: Boolean,
+    lyric: LyricsDoc?,
+    lyricLoading: Boolean,
+    positionMs: Long,
+    settingsProvider: () -> MusicSettings,
+    positionProvider: () -> Long,
+    onSeek: (Long) -> Unit,
+    onToggleStyle: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    BoxWithConstraints(modifier) {
+        val landscape = maxWidth >= maxHeight
+        if (landscape) {
+            Row(
+                Modifier.fillMaxSize().padding(horizontal = 20.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // 左：平滑歌词
+                Box(Modifier.weight(1f).fillMaxHeight()) {
+                    VinylLyrics(
+                        lyric = lyric,
+                        lyricLoading = lyricLoading,
+                        positionMs = positionMs,
+                        settingsProvider = settingsProvider,
+                        positionProvider = positionProvider,
+                        onSeek = onSeek,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                // 右：黑胶唱片（唱针从右上角伸出）
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .width((maxHeight * 0.70f).coerceAtMost(310.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    VinylDiscUnit(
+                        coverUrl = coverUrl,
+                        customCover = customCover,
+                        customDisc = customDisc,
+                        isPlaying = isPlaying,
+                        onToggleStyle = onToggleStyle,
+                        discSize = (maxHeight * 0.62f).coerceAtMost(284.dp)
+                    )
+                }
+            }
+        } else {
+            // 竖屏：唱片在上、歌词在下
+            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height((maxWidth * 0.78f).coerceAtMost(280.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    VinylDiscUnit(
+                        coverUrl = coverUrl,
+                        customCover = customCover,
+                        customDisc = customDisc,
+                        isPlaying = isPlaying,
+                        onToggleStyle = onToggleStyle,
+                        discSize = (maxWidth * 0.62f).coerceAtMost(236.dp)
+                    )
+                }
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    VinylLyrics(
+                        lyric = lyric,
+                        lyricLoading = lyricLoading,
+                        positionMs = positionMs,
+                        settingsProvider = settingsProvider,
+                        positionProvider = positionProvider,
+                        onSeek = onSeek,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 黑胶唱片单元：旋转盘面 + 唱针臂 + 切换轻提示；整块可点击切换界面 */
+@Composable
+private fun VinylDiscUnit(
+    coverUrl: String?,
+    customCover: String?,
+    customDisc: String?,
+    isPlaying: Boolean,
+    onToggleStyle: () -> Unit,
+    discSize: Dp
+) {
+    val spin = rememberSpinAngle(isPlaying)
+    val artwork = rememberDiscArtwork(coverUrl, customDisc ?: customCover)
+    Box(
+        Modifier
+            .size(discSize)
+            .clickable(onClick = onToggleStyle)
+    ) {
+        VinylDiscCanvas(
+            angle = spin.value,
+            artwork = artwork.value,
+            modifier = Modifier.size(discSize)
+        )
+        // 唱针臂：与盘面同尺寸画布，允许溢出边界绘制（Compose Canvas 默认不裁剪）
+        TonearmCanvas(
+            isPlaying = isPlaying,
+            modifier = Modifier.size(discSize)
+        )
+        // 轻提示：点击唱片可切回 3D 歌词墙
+        Text(
+            text = "轻触唱片切换样式",
+            color = Color.White.copy(alpha = 0.35f),
+            fontSize = 10.sp,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 4.dp)
+        )
+    }
+}
+
+/**
+ * 黑胶唱片绘制（v2.22）：深色胶盘基底 + 同心唱纹 + 两道扫掠高光；中心标贴为
+ * 专辑封面（圆形裁剪，随盘旋转），含标贴细环、中孔与外缘描边。
+ */
+@Composable
+private fun VinylDiscCanvas(angle: Float, artwork: Bitmap?, modifier: Modifier = Modifier) {
+    Canvas(modifier.graphicsLayer { rotationZ = angle }) {
+        val r = size.minDimension / 2f
+        val c = Offset(size.width / 2f, size.height / 2f)
+
+        // 胶盘基底：深灰黑径向渐变
+        drawCircle(
+            brush = Brush.radialGradient(
+                listOf(Color(0xFF2C2C33), Color(0xFF1B1B21), Color(0xFF101015)),
+                c, radius = r
+            ),
+            radius = r,
+            center = c
+        )
+        // 同心唱纹（细环交替明暗）
+        for (i in 0..9) {
+            drawCircle(
+                color = if (i % 2 == 0) Color.White.copy(alpha = 0.05f) else Color.Black.copy(alpha = 0.25f),
+                radius = r * (0.455f + i * 0.050f),
+                center = c,
+                style = Stroke(width = 1.dp.toPx())
+            )
+        }
+        // 扫掠高光：两道柔和扇形反光（模拟胶盘反光）
+        drawCircle(
+            brush = Brush.sweepGradient(
+                listOf(
+                    Color.White.copy(alpha = 0.10f), Color.Transparent, Color.Transparent,
+                    Color.White.copy(alpha = 0.06f), Color.Transparent, Color.Transparent,
+                    Color.White.copy(alpha = 0.10f)
+                ),
+                c
+            ),
+            radius = r,
+            center = c
+        )
+        // 中心标贴：专辑封面圆形裁剪（自定义光盘图/封面图已在 rememberDiscArtwork 解析）
+        val lr = r * 0.40f
+        if (artwork != null) {
+            val srcMin = minOf(artwork.width, artwork.height)
+            val srcOff = IntOffset((artwork.width - srcMin) / 2, (artwork.height - srcMin) / 2)
+            val lrInt = (2 * lr).roundToInt().coerceAtLeast(1)
+            clipPath(Path().apply { addOval(Rect(c.x - lr, c.y - lr, c.x + lr, c.y + lr)) }) {
+                drawImage(
+                    image = artwork.asImageBitmap(),
+                    srcOffset = srcOff,
+                    srcSize = IntSize(srcMin, srcMin),
+                    dstOffset = IntOffset((c.x - lr).roundToInt(), (c.y - lr).roundToInt()),
+                    dstSize = IntSize(lrInt, lrInt)
+                )
+            }
+        } else {
+            drawCircle(color = Color(0xFF23232B), radius = lr, center = c)
+        }
+        // 标贴细环 + 唱纹内圈亮环
+        drawCircle(color = Color.White.copy(alpha = 0.25f), radius = lr, center = c, style = Stroke(1.dp.toPx()))
+        drawCircle(color = Color.White.copy(alpha = 0.10f), radius = r * 0.45f, center = c, style = Stroke(1.dp.toPx()))
+        // 中孔 + 外缘
+        drawCircle(color = Color(0xFF0B0B10), radius = r * 0.05f, center = c)
+        drawCircle(color = Color.White.copy(alpha = 0.30f), radius = r * 0.05f, center = c, style = Stroke(0.8.dp.toPx()))
+        drawCircle(color = Color.Black.copy(alpha = 0.55f), radius = r, center = c, style = Stroke(1.2.dp.toPx()))
+        drawCircle(color = Color.White.copy(alpha = 0.16f), radius = r - 0.6.dp.toPx(), center = c, style = Stroke(1.dp.toPx()))
+    }
+}
+
+/**
+ * 唱针臂（v2.22）：轴承固定在盘面右上外侧（相对盘心 +0.60D / -0.48D）。
+ * 规范画法针臂沿水平向左（180°），旋转 -38.7° 后针尖落在盘面唱纹上；
+ * 暂停时绕轴承顺时针抬起 26°（-12.7°）到盘缘外。含投影、配重、双段臂身、
+ * 唱头与针尖、轴承高光，全 Canvas 矢量绘制。
+ */
+@Composable
+private fun TonearmCanvas(isPlaying: Boolean, modifier: Modifier = Modifier) {
+    val armDeg by animateFloatAsState(
+        targetValue = if (isPlaying) -38.7f else -12.7f,
+        animationSpec = tween(450),
+        label = "tonearm"
+    )
+    Canvas(modifier) {
+        val d = size.minDimension
+        val pivot = Offset(size.width / 2f + 0.60f * d, size.height / 2f - 0.48f * d)
+        val armLen = 0.329f * d
+        val px = 1.dp.toPx()
+        rotate(degrees = armDeg, pivot = pivot) {
+            val dir = Offset(-1f, 0f) // 规范方向：水平向左，rotate 已负责实际角度
+            val elbow = pivot + dir * (armLen * 0.52f)
+            val tip = pivot + dir * armLen
+            // 投影
+            drawLine(
+                Color.Black.copy(alpha = 0.30f),
+                pivot + Offset(2f * px, 3f * px),
+                tip + Offset(2f * px, 3f * px),
+                strokeWidth = 5f * px,
+                cap = StrokeCap.Round
+            )
+            // 配重（轴承另一侧短粗段）
+            drawLine(
+                Color(0xFF5A5A66),
+                pivot,
+                pivot - dir * (0.10f * armLen),
+                strokeWidth = 7f * px,
+                cap = StrokeCap.Round
+            )
+            // 后段粗臂（轴承→肘部）银色渐变
+            drawLine(
+                brush = Brush.linearGradient(
+                    listOf(Color(0xFFD6D6E0), Color(0xFF8E8E9C)),
+                    start = pivot,
+                    end = elbow
+                ),
+                start = pivot,
+                end = elbow,
+                strokeWidth = 6f * px,
+                cap = StrokeCap.Round
+            )
+            // 前段细管（肘部→唱头）
+            drawLine(Color(0xFFC2C2CE), elbow, tip, strokeWidth = 3.2f * px, cap = StrokeCap.Round)
+            // 唱头（圆角小方块贴盘面）+ 针尖
+            drawRoundRect(
+                color = Color(0xFF3A3A46),
+                topLeft = tip + Offset(-1f * px, -4.5f * px),
+                size = Size(14f * px, 9f * px),
+                cornerRadius = CornerRadius(3f * px)
+            )
+            drawLine(
+                Color(0xFFEDEDF4),
+                tip + Offset(4f * px, 4.5f * px),
+                tip + Offset(4f * px, 7.5f * px),
+                strokeWidth = 1.6f * px
+            )
+            // 轴承：银色外环 + 深色芯 + 左上高光点
+            drawCircle(
+                brush = Brush.radialGradient(
+                    listOf(Color(0xFFEDEDF5), Color(0xFF9A9AA8)),
+                    pivot,
+                    radius = 10f * px
+                ),
+                radius = 10f * px,
+                center = pivot
+            )
+            drawCircle(Color(0xFF2E2E38), radius = 4.5f * px, center = pivot)
+            drawCircle(
+                Color.White.copy(alpha = 0.55f),
+                radius = 1.6f * px,
+                center = pivot + Offset(-3f * px, -3f * px)
+            )
+        }
+    }
+}
+
+/**
+ * 黑胶界面歌词（对照参考图2）：左对齐平滑滚动，当前行白亮加粗、其余淡化缩小，
+ * 点击任意行跳转播放进度；上/下边缘黑色渐隐保证任意背景下可读。
+ */
+@Composable
+private fun VinylLyrics(
+    lyric: LyricsDoc?,
+    lyricLoading: Boolean,
+    positionMs: Long,
+    settingsProvider: () -> MusicSettings,
+    positionProvider: () -> Long,
+    onSeek: (Long) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (lyric == null || lyric.lines.isEmpty()) {
+        Column(
+            modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            if (lyricLoading) {
+                CircularProgressIndicator(
+                    color = Color.White.copy(alpha = 0.6f),
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(Modifier.height(10.dp))
+            }
+            Text(
+                text = if (lyricLoading) "正在获取歌词…" else "暂无歌词，请欣赏",
+                color = Color.White.copy(alpha = 0.5f),
+                fontSize = 14.sp
+            )
+        }
+        return
+    }
+    val idx = remember(positionMs, lyric) { lyric.indexAt(positionMs) }
+    val listState = rememberLazyListState()
+    // 当前行滚动到视口中部（上下大 contentPadding 让首尾行也能居中）
+    LaunchedEffect(idx, lyric) {
+        if (idx >= 0) listState.animateScrollToItem(idx)
+    }
+    BoxWithConstraints(modifier) {
+        val padV = maxHeight * 0.38f
+        LazyColumn(
+            state = listState,
+            contentPadding = PaddingValues(top = padV, bottom = padV),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            itemsIndexed(lyric.lines, key = { i, _ -> i }) { i, line ->
+                val active = i == idx
+                val settings = settingsProvider()
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { onSeek(line.timeMs) }
+                        .padding(horizontal = 30.dp, vertical = 10.dp)
+                ) {
+                    Text(
+                        text = line.text.ifBlank { "···" },
+                        color = if (active) Color.White else Color.White.copy(alpha = 0.45f),
+                        fontSize = (if (active) settings.lyricFontSize
+                            else (settings.lyricFontSize * 0.80f).roundToInt()).sp,
+                        fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                        lineHeight = (settings.lyricFontSize + 10).sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        style = if (active && settings.lyricGlow) {
+                            TextStyle(shadow = Shadow(color = Color.Black.copy(alpha = 0.6f), blurRadius = 18f))
+                        } else {
+                            TextStyle.Default
+                        }
+                    )
+                    if (settings.showTranslation && active && !line.translation.isNullOrBlank()) {
+                        Text(
+                            text = line.translation,
+                            color = Color.White.copy(alpha = 0.55f),
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                }
+            }
+        }
+        // 上下渐隐（黑胶界面背景已整体压暗，这里仅轻扫增强可读性）
+        Box(
+            Modifier
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color.Black.copy(alpha = 0.30f),
+                            Color.Transparent,
+                            Color.Transparent,
+                            Color.Black.copy(alpha = 0.30f)
+                        )
+                    )
+                )
         )
     }
 }

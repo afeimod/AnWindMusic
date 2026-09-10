@@ -238,6 +238,8 @@ data class MusicSettings(
     val coverImage: String? = null,
     /** 歌词秀自定义光盘盘面图片（空 = 与封面同图，v2.21） */
     val discImage: String? = null,
+    /** 歌词秀界面样式：0 = 3D 歌词墙（封面+CD），1 = 黑胶唱片机（v2.22 新增，点击封面/唱片切换） */
+    val lyricStyle: Int = LYRIC_STYLE_WALL,
     /** 行切换平滑动画 */
     val lyricDynamic: Boolean = true,
     /** 当前行高亮发光 */
@@ -268,6 +270,10 @@ data class MusicSettings(
         const val BG_SOLID = 1      // 纯色
         const val BG_GRADIENT = 2   // 渐变预设
         const val BG_IMAGE = 3      // 自定义图片
+
+        // 歌词秀界面样式（v2.22）：点击封面/唱片互相切换，设置里持久化
+        const val LYRIC_STYLE_WALL = 0    // 3D 歌词墙 + 封面嵌合 CD（默认）
+        const val LYRIC_STYLE_VINYL = 1   // 黑胶唱片机（左侧歌词 + 右侧唱片 + 唱针）
 
         // 屏幕方向
         const val ORIENTATION_AUTO = 0          // 跟随系统
@@ -430,6 +436,7 @@ class MusicStore(private val context: Context) {
             desktopLyricLines = o.optInt("desktopLyricLines", 4).coerceIn(1, 15),
             coverImage = o.optString("coverImage", "").takeIf { it.isNotEmpty() },
             discImage = o.optString("discImage", "").takeIf { it.isNotEmpty() },
+            lyricStyle = o.optInt("lyricStyle", MusicSettings.LYRIC_STYLE_WALL).coerceIn(0, 1),
             lyricDynamic = o.optBoolean("lyricDynamic", true),
             lyricGlow = o.optBoolean("lyricGlow", true),
             showTranslation = o.optBoolean("showTranslation", true),
@@ -475,6 +482,7 @@ class MusicStore(private val context: Context) {
                     .put("desktopLyricLines", s.desktopLyricLines)
                     .put("coverImage", s.coverImage ?: "")
                     .put("discImage", s.discImage ?: "")
+                    .put("lyricStyle", s.lyricStyle)
                     .put("lyricDynamic", s.lyricDynamic)
                     .put("lyricGlow", s.lyricGlow)
                     .put("showTranslation", s.showTranslation)

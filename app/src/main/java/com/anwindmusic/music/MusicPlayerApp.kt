@@ -602,6 +602,8 @@ fun MusicContent(
                             onCycleMode = { engine.cycleMode() },
                             onDownloadLyric = { downloadLyricFile(engine.currentSong) },
                             onClose = { showLyrics = false },
+                            // v2.22：歌词秀双界面（3D 墙 / 黑胶唱片机）点击封面切换，经设置持久化
+                            onUpdateSettings = { updateSettings(it) },
                             isTrueFullscreen = isFullscreen,
                             onToggleFullscreen = onToggleFullscreen
                         )
