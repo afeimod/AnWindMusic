@@ -61,7 +61,7 @@ private val HOT_KEYWORDS = listOf("周杰伦", "林俊杰", "陈奕迅", "邓紫
 fun SearchPage(
     query: String,
     onQueryChange: (String) -> Unit,
-    /** v2.24：当前搜索音源（0=酷我 / 1=聚合） */
+    /** v2.24：当前搜索音源（0=酷我 / 1=简音） */
     searchSource: Int,
     /** v2.24：切换搜索音源（选择持久化） */
     onSourceChange: (Int) -> Unit,
@@ -69,7 +69,7 @@ fun SearchPage(
     results: List<SongInfo>,
     searching: Boolean,
     error: String?,
-    /** v2.24：是否显示“加载更多”（聚合源一次返回全部结果，无分页） */
+    /** v2.24：是否显示“加载更多”（简音源一次返回全部结果，无分页） */
     canLoadMore: Boolean = true,
     onLoadMore: () -> Unit,
     favKeys: Set<String>,
@@ -95,7 +95,7 @@ fun SearchPage(
                 .padding(horizontal = 16.dp, vertical = 10.dp)
         )
 
-        // v2.24：搜索音源切换（酷我 / 聚合），选择持久化到设置
+        // v2.24：搜索音源切换（酷我 / 简音），选择持久化到设置
         Row(
             Modifier
                 .fillMaxWidth()
@@ -111,7 +111,7 @@ fun SearchPage(
             )
             listOf(
                 MusicSettings.SEARCH_SOURCE_KUWO to "酷我",
-                MusicSettings.SEARCH_SOURCE_METING to "聚合"
+                MusicSettings.SEARCH_SOURCE_METING to "简音"
             ).forEach { (src, label) ->
                 val selected = searchSource == src
                 Box(
@@ -142,7 +142,7 @@ fun SearchPage(
             }
             Text(
                 text = if (searchSource == MusicSettings.SEARCH_SOURCE_METING)
-                    "聚合同款 · 网易云聚合直连"
+                    "简音同款 · 网易云聚合直连"
                 else
                     "默认曲库",
                 fontSize = 10.sp,
@@ -241,7 +241,7 @@ fun SearchPage(
                         onDownloadLyric = { onDownloadLyric(song) }
                     )
                 }
-                // 加载更多（v2.24：聚合源无分页时隐藏）
+                // 加载更多（v2.24：简音源无分页时隐藏）
                 if (canLoadMore) {
                     item(key = "load_more") {
                         Box(

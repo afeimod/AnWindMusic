@@ -271,7 +271,7 @@ fun Lyrics3DPage(
                             "kuwo" -> "词源 酷我"
                             "qq" -> "词源 QQ音乐"
                             "lrclib" -> "词源 LRCLIB"
-                            "meting" -> "词源 聚合"
+                            "meting" -> "词源 简音"
                             else -> "已缓存"
                         },
                         color = Color.White.copy(alpha = 0.35f),
@@ -316,46 +316,78 @@ fun Lyrics3DPage(
                     modifier = Modifier.weight(1f).fillMaxWidth()
                 )
             } else {
-                // 3D 歌词墙：左封面+CD / 右 3D 歌词墙
-                Row(
+                // 3D 歌词墙（v2.24.1 双布局）：横屏左右 —— 封面+CD 嵌合居左 / 3D 墙居右；
+                // 竖屏上下 —— 封面立于光盘中心（同心）居上放大居中 / 3D 墙居下占满宽度
+                BoxWithConstraints(
                     Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .padding(horizontal = 24.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(horizontal = 24.dp)
                 ) {
-                    // 左：封面 + 旋转CD（嵌合，占 38%）
-                    Box(
-                        Modifier
-                            .fillMaxHeight()
-                            .weight(0.38f),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CoverWithDisc(
-                            coverUrl = coverSrc,
-                            customCover = settings.coverImage,
-                            customDisc = settings.discImage,
-                            isPlaying = isPlaying,
-                            onSwitchStyle = toggleStyle
-                        )
-                    }
+                    // 方向判断在直接作用域算好再进嵌套 lambda（v2.22.1 编译约束：
+                    // maxWidth/maxHeight 不跨 composable lambda 隐式访问）
+                    val landscape = maxWidth >= maxHeight
+                    if (landscape) {
+                        Row(
+                            Modifier.fillMaxSize(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // 左：封面 + 旋转CD（嵌合，占 38%）
+                            Box(
+                                Modifier
+                                    .fillMaxHeight()
+                                    .weight(0.38f),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CoverWithDisc(
+                                    coverUrl = coverSrc,
+                                    customCover = settings.coverImage,
+                                    customDisc = settings.discImage,
+                                    isPlaying = isPlaying,
+                                    concentric = false,
+                                    onSwitchStyle = toggleStyle
+                                )
+                            }
 
-                    // 右：3D 歌词墙（占 62%）
-                    Box(Modifier.weight(0.62f).fillMaxHeight()) {
-                        if (lyric != null && lyric.lines.isNotEmpty()) {
-                            LyricsWall(
-                                doc = lyric,
+                            // 右：3D 歌词墙（占 62%）
+                            LyricsWallArea(
+                                lyric = lyric,
+                                lyricLoading = lyricLoading,
                                 positionMs = positionMs,
                                 settingsProvider = settingsProvider,
                                 positionProvider = positionProvider,
                                 onSeek = onSeek,
-                                modifier = Modifier.fillMaxSize()
+                                modifier = Modifier.weight(0.62f).fillMaxHeight()
                             )
-                        } else {
-                            NoLyricHint(
+                        }
+                    } else {
+                        Column(Modifier.fillMaxSize()) {
+                            // 上：封面立于光盘中心（同心，占 46%，居中放大）
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .weight(0.46f),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CoverWithDisc(
+                                    coverUrl = coverSrc,
+                                    customCover = settings.coverImage,
+                                    customDisc = settings.discImage,
+                                    isPlaying = isPlaying,
+                                    concentric = true,
+                                    onSwitchStyle = toggleStyle
+                                )
+                            }
+
+                            // 下：3D 歌词墙（占满宽度）
+                            LyricsWallArea(
                                 lyric = lyric,
                                 lyricLoading = lyricLoading,
-                                modifier = Modifier.fillMaxSize()
+                                positionMs = positionMs,
+                                settingsProvider = settingsProvider,
+                                positionProvider = positionProvider,
+                                onSeek = onSeek,
+                                modifier = Modifier.weight(0.54f).fillMaxWidth()
                             )
                         }
                     }
@@ -434,13 +466,58 @@ private fun CoverWithDisc(
     customCover: String?,
     customDisc: String?,
     isPlaying: Boolean,
+    /** v2.24.1：true = 竖屏同心模式（封面卡片立于光盘中心）；false = 嵌合模式（盘心压封面右缘） */
+    concentric: Boolean,
     /** v2.22：点击封面/光盘切到黑胶唱片机界面 */
     onSwitchStyle: () -> Unit
 ) {
     val cdAngle = rememberSpinAngle(isPlaying)
     val discBmp = rememberDiscArtwork(coverUrl, customDisc ?: customCover)
 
-    // v2.22 嵌合式封面+光盘（对照新参考）：光盘中心正好落在封面右边缘上，
+    if (concentric) {
+        // v2.24.1 竖屏同心模式：大光盘为底，封面卡片居中压在盘心 —— 封面真正
+        // 「站」在光盘中心；盘缘环带露出旋转的封面盘面纹理与扫光。光盘直径随
+        // 容器宽高自适应，封面卡片为盘径的 62%（环带约占半径 19%）
+        BoxWithConstraints(contentAlignment = Alignment.Center) {
+            val discD = minOf(maxWidth.value, maxHeight.value)
+                .times(0.92f)
+                .coerceIn(140f, 320f)
+                .dp
+            val coverD = discD * 0.62f
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(discD)
+                    .clickable(onClick = onSwitchStyle)
+            ) {
+                DiscCanvas(
+                    angle = cdAngle.value,
+                    cover = discBmp.value,
+                    modifier = Modifier.size(discD)
+                )
+                if (!customCover.isNullOrEmpty()) {
+                    BgImage(
+                        customCover,
+                        Modifier
+                            .size(coverD)
+                            .shadow(18.dp, RoundedCornerShape(12.dp))
+                            .clip(RoundedCornerShape(12.dp))
+                    )
+                } else {
+                    AsyncCover(
+                        url = coverUrl,
+                        modifier = Modifier
+                            .size(coverD)
+                            .shadow(18.dp, RoundedCornerShape(12.dp))
+                            .clip(RoundedCornerShape(12.dp))
+                    )
+                }
+            }
+        }
+        return
+    }
+
+    // v2.22 嵌合式封面+光盘（横屏，对照新参考）：光盘中心正好落在封面右边缘上，
     // 仅探出右半圆 —— 相比旧版（中心在封面内侧 29dp）整体外拉、嵌为一体；
     // 整体（封面 190 + 光盘探出 89 ≈ 279dp）超宽时按容器宽等比缩小防溢出
     BoxWithConstraints(contentAlignment = Alignment.Center) {
@@ -674,24 +751,15 @@ private fun VinylBody(
             )
         }
         // 右：3D 歌词墙（与默认界面同一套）
-        Box(Modifier.weight(0.62f).fillMaxHeight()) {
-            if (lyric != null && lyric.lines.isNotEmpty()) {
-                LyricsWall(
-                    doc = lyric,
-                    positionMs = positionMs,
-                    settingsProvider = settingsProvider,
-                    positionProvider = positionProvider,
-                    onSeek = onSeek,
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                NoLyricHint(
-                    lyric = lyric,
-                    lyricLoading = lyricLoading,
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-        }
+        LyricsWallArea(
+            lyric = lyric,
+            lyricLoading = lyricLoading,
+            positionMs = positionMs,
+            settingsProvider = settingsProvider,
+            positionProvider = positionProvider,
+            onSeek = onSeek,
+            modifier = Modifier.weight(0.62f).fillMaxHeight()
+        )
     }
 }
 
@@ -716,6 +784,37 @@ private fun NoLyricHint(lyric: LyricsDoc?, lyricLoading: Boolean, modifier: Modi
             color = Color.White.copy(alpha = 0.5f),
             fontSize = 14.sp
         )
+    }
+}
+
+/** v2.24.1：歌词墙/无词占位区域（默认界面横竖屏与黑胶界面共用，消重复分支） */
+@Composable
+private fun LyricsWallArea(
+    lyric: LyricsDoc?,
+    lyricLoading: Boolean,
+    positionMs: Long,
+    settingsProvider: () -> MusicSettings,
+    positionProvider: () -> Long,
+    onSeek: (Long) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(modifier) {
+        if (lyric != null && lyric.lines.isNotEmpty()) {
+            LyricsWall(
+                doc = lyric,
+                positionMs = positionMs,
+                settingsProvider = settingsProvider,
+                positionProvider = positionProvider,
+                onSeek = onSeek,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            NoLyricHint(
+                lyric = lyric,
+                lyricLoading = lyricLoading,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
     }
 }
 
@@ -763,8 +862,9 @@ private fun VinylDiscUnit(
 }
 
 /**
- * 黑胶唱片绘制（v2.22；v2.23 标贴加大收窄黑边）：深色胶盘基底 + 同心唱纹 + 两道
- * 扫掠高光；中心标贴为专辑封面（圆形裁剪，随盘旋转），含标贴细环、中孔与外缘描边。
+ * 黑胶唱片绘制（v2.22；v2.24.1 标贴再加大 0.55r→0.72r 黑边再度收窄）：深色胶盘基底 +
+ * 同心唱纹 + 两道扫掠高光；中心标贴为专辑封面（圆形裁剪，随盘旋转），含标贴细环、
+ * 中孔与外缘描边。
  */
 @Composable
 private fun VinylDiscCanvas(angle: Float, artwork: Bitmap?, modifier: Modifier = Modifier) {
@@ -785,7 +885,7 @@ private fun VinylDiscCanvas(angle: Float, artwork: Bitmap?, modifier: Modifier =
         for (i in 0..9) {
             drawCircle(
                 color = if (i % 2 == 0) Color.White.copy(alpha = 0.05f) else Color.Black.copy(alpha = 0.25f),
-                radius = r * (0.595f + i * 0.038f),
+                radius = r * (0.745f + i * 0.022f),
                 center = c,
                 style = Stroke(width = 1.dp.toPx())
             )
@@ -804,8 +904,8 @@ private fun VinylDiscCanvas(angle: Float, artwork: Bitmap?, modifier: Modifier =
             center = c
         )
         // 中心标贴：专辑封面圆形裁剪（自定义光盘图/封面图已在 rememberDiscArtwork 解析）
-        // v2.23：标贴 0.40r → 0.55r，胶盘黑边收窄
-        val lr = r * 0.55f
+        // v2.24.1：标贴 0.55r → 0.72r，胶盘黑边再度收窄（用户反馈 v2.23 仍偏大）
+        val lr = r * 0.72f
         if (artwork != null) {
             val srcMin = minOf(artwork.width, artwork.height)
             val srcOff = IntOffset((artwork.width - srcMin) / 2, (artwork.height - srcMin) / 2)
@@ -824,7 +924,7 @@ private fun VinylDiscCanvas(angle: Float, artwork: Bitmap?, modifier: Modifier =
         }
         // 标贴细环 + 唱纹内圈亮环
         drawCircle(color = Color.White.copy(alpha = 0.25f), radius = lr, center = c, style = Stroke(1.dp.toPx()))
-        drawCircle(color = Color.White.copy(alpha = 0.10f), radius = r * 0.59f, center = c, style = Stroke(1.dp.toPx()))
+        drawCircle(color = Color.White.copy(alpha = 0.10f), radius = r * 0.735f, center = c, style = Stroke(1.dp.toPx()))
         // 中孔 + 外缘
         drawCircle(color = Color(0xFF0B0B10), radius = r * 0.05f, center = c)
         drawCircle(color = Color.White.copy(alpha = 0.30f), radius = r * 0.05f, center = c, style = Stroke(0.8.dp.toPx()))

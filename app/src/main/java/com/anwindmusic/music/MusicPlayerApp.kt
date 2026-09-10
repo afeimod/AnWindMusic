@@ -78,7 +78,7 @@ import java.io.File
 import kotlinx.coroutines.launch
 
 /**
- * 云音乐独立版（v1.1.0，移植自 AnWind 桌面云音乐 v2.21.5）：
+ * 云音乐独立版（v1.0.0，移植自 AnWind 桌面云音乐 v2.21.5）：
  * - 纯手机布局：顶部标题栏 + 内容页 + 紧凑播放条 + 底部导航栏（对照网易云音乐手机版）
  * - 功能与桌面版一致：搜索播放、我喜欢、最近播放、本地音乐、歌曲/歌词下载、
  *   3D 歌词秀（Lyrics3DPage）、桌面歌词悬浮窗（LyricOverlayService）、设置中心
@@ -164,7 +164,7 @@ fun MusicContent(
     var query by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<SongInfo>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
-    // v2.24：搜索音源（0=酷我 / 1=聚合），选择持久化到设置
+    // v2.24：搜索音源（0=酷我 / 1=简音），选择持久化到设置
     var searchSource by remember { mutableStateOf(musicSettings.searchSource) }
     var searchError by remember { mutableStateOf<String?>(null) }
     var searchPage by remember { mutableStateOf(0) }
@@ -320,7 +320,7 @@ fun MusicContent(
         val item = DownloadItem(song)
         downloads.add(0, item)
         uiScope.launch {
-            // 1) 解析直链（v2.24：聚合 Meting 音源走代理直链解析，其余走酷我解析）
+            // 1) 解析直链（v2.24：简音 Meting 音源走代理直链解析，其余走酷我解析）
             val urlRes = song.metingServer
                 ?.let { MetingMusicApi.resolvePlayUrl(it, song.id) }
                 ?: KuwoMusicApi.getPlayUrl(song.id)
@@ -479,7 +479,7 @@ fun MusicContent(
                                     searchError = null
                                     uiScope.launch {
                                         if (searchSource == MusicSettings.SEARCH_SOURCE_METING) {
-                                            // v2.24：聚合音源（Meting 聚合，netease 空结果自动回落 kugou）
+                                            // v2.24：简音音源（Meting 聚合，netease 空结果自动回落 kugou）
                                             val r = MetingMusicApi.search(kw)
                                             if (r.isSuccess) {
                                                 searchResults = r.getOrThrow().map { SongInfo.fromMetingSong(it) }
@@ -508,7 +508,7 @@ fun MusicContent(
                                 error = searchError,
                                 canLoadMore = searchSource == MusicSettings.SEARCH_SOURCE_KUWO,
                                 onLoadMore = {
-                                    // v2.24：仅酷我源支持分页；聚合源一次返回全部结果
+                                    // v2.24：仅酷我源支持分页；简音源一次返回全部结果
                                     if (searchSource == MusicSettings.SEARCH_SOURCE_KUWO &&
                                         !searching && searchResults.isNotEmpty()
                                     ) {

@@ -8,9 +8,9 @@ import java.io.IOException
 import java.net.URLDecoder
 
 /**
- * 聚合同款 Meting 聚合音源（v2.24 新增，搜索页第二音源）。
+ * 简音同款 Meting 聚合音源（v2.24 新增，搜索页第二音源）。
  *
- * 参考开源项目聚合（github.com/qianqianhhh2/jianyin）的 MetingApi 用法：
+ * 参考开源项目简音（github.com/qianqianhhh2/jianyin）的 MetingApi 用法：
  * - 聚合端点：https://api.qijieya.cn/meting/?server=<netease|kugou>&type=<search|url|pic|lrc>&id=<关键词或ID>
  * - 搜索（type=search）返回 JSON 数组：[{name, artist, url, pic, lrc}]，
  *   其中 url/pic/lrc 为同域代理直链（302 跳转到真实资源），歌曲 ID 可从 url 的 id 参数提取
@@ -28,7 +28,7 @@ object MetingMusicApi {
     /** 搜索尝试的 server 顺序（netease 优先，空结果回落 kugou） */
     private val SEARCH_SERVERS = listOf("netease", "kugou")
 
-    /** UA 与聚合/浏览器一致，避免被聚合端点的简单 UA 过滤拦截 */
+    /** UA 与简音/浏览器一致，避免被聚合端点的简单 UA 过滤拦截 */
     private val UA = KuwoMusicApi.UA_PC
 
     // ==================== 数据模型 ====================
@@ -47,7 +47,7 @@ object MetingMusicApi {
     // ==================== 搜索 ====================
 
     /**
-     * 关键词搜索歌曲（聚合音源）。
+     * 关键词搜索歌曲（简音音源）。
      * 依次尝试 [SEARCH_SERVERS]，任一源非空即返回；全部无结果返回空列表。
      */
     suspend fun search(keyword: String): Result<List<Song>> =
