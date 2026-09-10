@@ -149,6 +149,13 @@ fun MusicContent(
 
     val uiScope = rememberCoroutineScope()
 
+    // ===== 播放器设置中心（v2.24 前置声明：搜索音源等状态初始化需读取设置） =====
+    var musicSettings by remember { mutableStateOf(engine.store.loadMusicSettings()) }
+    fun updateSettings(s: MusicSettings) {
+        musicSettings = s
+        engine.store.saveMusicSettings(s)
+    }
+
     // ===== 页面状态 =====
     var page by remember { mutableStateOf(Page.SEARCH) }
     var showLyrics by remember { mutableStateOf(false) }
@@ -170,13 +177,6 @@ fun MusicContent(
     fun refreshLibrary() {
         favorites = engine.store.loadFavorites()
         recent = engine.store.loadRecent()
-    }
-
-    // ===== 播放器设置中心 =====
-    var musicSettings by remember { mutableStateOf(engine.store.loadMusicSettings()) }
-    fun updateSettings(s: MusicSettings) {
-        musicSettings = s
-        engine.store.saveMusicSettings(s)
     }
 
     // ===== 桌面歌词锁定开关（状态存 desklyric.json，与位置同文件） =====
