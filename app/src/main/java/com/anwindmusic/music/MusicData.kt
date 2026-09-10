@@ -41,6 +41,14 @@ data class SongInfo(
 
     val isLocal: Boolean get() = source == SOURCE_LOCAL
 
+    /** v2.24：简音 Meting 音源对应的 server（非 Meting 歌返回 null） */
+    val metingServer: String?
+        get() = when (source) {
+            SOURCE_METING_NETEASE -> "netease"
+            SOURCE_METING_KUGOU -> "kugou"
+            else -> null
+        }
+
     fun toOnlineSong(): KuwoMusicApi.Song? =
         if (source == SOURCE_KUWO) {
             KuwoMusicApi.Song(id, name, artist, album, durationMs, picUrl)
@@ -49,10 +57,20 @@ data class SongInfo(
     companion object {
         const val SOURCE_KUWO = "kuwo"
         const val SOURCE_LOCAL = "local"
+        /** v2.24：简音同款 Meting 聚合音源（source 形如 meting_netease / meting_kugou） */
+        const val SOURCE_METING_NETEASE = "meting_netease"
+        const val SOURCE_METING_KUGOU = "meting_kugou"
 
         fun fromKuwoSong(s: KuwoMusicApi.Song) = SongInfo(
             id = s.id, name = s.name, artist = s.artist, album = s.album,
             durationMs = s.durationMs, picUrl = s.pic, source = SOURCE_KUWO
+        )
+
+        /** v2.24：Meting 搜索结果 → SongInfo（无时长/专辑字段，prepared 后由播放器回填时长） */
+        fun fromMetingSong(s: MetingMusicApi.Song) = SongInfo(
+            id = s.id, name = s.name, artist = s.artist, album = "",
+            durationMs = 0L, picUrl = s.pic,
+            source = if (s.server == "kugou") SOURCE_METING_KUGOU else SOURCE_METING_NETEASE
         )
     }
 }
@@ -248,6 +266,8 @@ data class MusicSettings(
     val showTranslation: Boolean = true,
     /** 词源引擎：auto / kuwo / netease / qq / lrclib */
     val lyricEngine: String = ENGINE_AUTO,
+    /** v2.24：搜索音源：0 = 酷我（默认），1 = 简音（Meting 聚合，netease/kugou） */
+    val searchSource: Int = SEARCH_SOURCE_KUWO,
     // ---- 主页背景 ----
     val homeBgMode: Int = HOME_BG_DEFAULT,
     val homeBgColor: Int = 0xFFFCFCFD.toInt(),
@@ -301,6 +321,10 @@ data class MusicSettings(
         const val ENGINE_NETEASE = "netease"
         const val ENGINE_QQ = "qq"
         const val ENGINE_LRCLIB = "lrclib"
+
+        // 搜索音源（v2.24）：搜索页双源可切，选择持久化
+        const val SEARCH_SOURCE_KUWO = 0    // 酷我音乐（默认）
+        const val SEARCH_SOURCE_METING = 1  // 简音（Meting 聚合，netease/kugou）
 
         /** 词源显示名（设置页 / 词源标记共用） */
         val ENGINE_LABELS = linkedMapOf(
@@ -441,6 +465,7 @@ class MusicStore(private val context: Context) {
             lyricGlow = o.optBoolean("lyricGlow", true),
             showTranslation = o.optBoolean("showTranslation", true),
             lyricEngine = o.optString("lyricEngine", MusicSettings.ENGINE_AUTO),
+            searchSource = o.optInt("searchSource", MusicSettings.SEARCH_SOURCE_KUWO).coerceIn(0, 1),
             homeBgMode = o.optInt("homeBgMode", MusicSettings.HOME_BG_DEFAULT),
             homeBgColor = o.optInt("homeBgColor", 0xFFFCFCFD.toInt()),
             homeBgGradient = o.optInt("homeBgGradient", 0),
@@ -487,6 +512,7 @@ class MusicStore(private val context: Context) {
                     .put("lyricGlow", s.lyricGlow)
                     .put("showTranslation", s.showTranslation)
                     .put("lyricEngine", s.lyricEngine)
+                    .put("searchSource", s.searchSource)
                     .put("homeBgMode", s.homeBgMode)
                     .put("homeBgColor", s.homeBgColor)
                     .put("homeBgGradient", s.homeBgGradient)
@@ -722,6 +748,9 @@ suspend fun fetchLyrics(
     val queries = buildLyricQueries(song)
     if (queries.isEmpty()) return null
 
+    // v2.24：简音 Meting 音源歌曲优先直取自带歌词直链（按歌曲 ID 精准对应）
+    fetchMetingDirect(store, song)?.let { return it }
+
     for (eng in engineOrder(engine)) {
         var pair: Pair<String, String?>? = null
         for ((qi, q) in queries.withIndex()) {
@@ -781,6 +810,9 @@ suspend fun fetchLyricsDeep(
     val candidates = queries.filter { it.title.isNotBlank() }.distinctBy { it.keyword }
     if (candidates.isEmpty()) return null
 
+    // v2.24：简音 Meting 音源直取歌词（与 fetchLyrics 同优先级）
+    fetchMetingDirect(store, song)?.let { return it }
+
     for (eng in engineOrder(engine)) {
         var pair: Pair<String, String?>? = null
         for (q in candidates) {
@@ -836,6 +868,19 @@ private fun deepTitleVariants(title: String): List<String> {
     }
     out.remove(t)
     return out.filter { it.length >= 2 }
+}
+
+/**
+ * v2.24：简音 Meting 音源歌词直取（搜索结果自带 LRC 直链，按歌曲 ID 精准对应）。
+ * 非 Meting 歌直接返回 null；拉取失败返回 null 走常规四级词源回退。
+ */
+private suspend fun fetchMetingDirect(store: MusicStore, song: SongInfo): LyricsDoc? {
+    val server = song.metingServer ?: return null
+    val main = runCatching { MetingMusicApi.fetchLrc(server, song.id).getOrNull() }.getOrNull()
+    if (main.isNullOrBlank()) return null
+    val doc = LrcParser.merge(main, null, "meting")
+    store.cacheLyrics(song, main, null)
+    return doc
 }
 
 /**

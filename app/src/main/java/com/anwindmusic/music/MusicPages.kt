@@ -61,10 +61,16 @@ private val HOT_KEYWORDS = listOf("周杰伦", "林俊杰", "陈奕迅", "邓紫
 fun SearchPage(
     query: String,
     onQueryChange: (String) -> Unit,
+    /** v2.24：当前搜索音源（0=酷我 / 1=简音） */
+    searchSource: Int,
+    /** v2.24：切换搜索音源（选择持久化） */
+    onSourceChange: (Int) -> Unit,
     onSearch: (String) -> Unit,
     results: List<SongInfo>,
     searching: Boolean,
     error: String?,
+    /** v2.24：是否显示“加载更多”（简音源一次返回全部结果，无分页） */
+    canLoadMore: Boolean = true,
     onLoadMore: () -> Unit,
     favKeys: Set<String>,
     currentKey: String?,
@@ -88,6 +94,63 @@ fun SearchPage(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 10.dp)
         )
+
+        // v2.24：搜索音源切换（酷我 / 简音），选择持久化到设置
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "音源",
+                fontSize = 12.sp,
+                color = if (sch.isCustom) sch.textSecondary else Mc.textSecondary,
+                style = TextStyle(shadow = sch.shadow)
+            )
+            listOf(
+                MusicSettings.SEARCH_SOURCE_KUWO to "酷我",
+                MusicSettings.SEARCH_SOURCE_METING to "简音"
+            ).forEach { (src, label) ->
+                val selected = searchSource == src
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(
+                            when {
+                                selected -> Mc.red
+                                sch.isCustom -> sch.glassField
+                                else -> Mc.hover
+                            }
+                        )
+                        .clickable { onSourceChange(src) }
+                        .padding(horizontal = 14.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        text = label,
+                        fontSize = 12.sp,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                        color = when {
+                            selected -> Color.White
+                            sch.isCustom -> sch.textPrimary
+                            else -> Mc.textSecondary
+                        },
+                        style = TextStyle(shadow = sch.shadow)
+                    )
+                }
+            }
+            Text(
+                text = if (searchSource == MusicSettings.SEARCH_SOURCE_METING)
+                    "简音同款 · 网易云聚合直连"
+                else
+                    "默认曲库",
+                fontSize = 10.sp,
+                color = if (sch.isCustom) sch.textSecondary else Mc.textTertiary,
+                style = TextStyle(shadow = sch.shadow),
+                maxLines = 1
+            )
+        }
 
         if (results.isEmpty()) {
             // 空态：热门关键词
@@ -178,26 +241,30 @@ fun SearchPage(
                         onDownloadLyric = { onDownloadLyric(song) }
                     )
                 }
-                // 加载更多
-                item(key = "load_more") {
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable(onClick = onLoadMore)
-                            .padding(vertical = 14.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (searching) {
-                            CircularProgressIndicator(color = Mc.red, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
-                        } else {
-                            Text(
-                                "加载更多",
-                                fontSize = 12.sp,
-                                color = if (sch.isCustom) sch.textSecondary else Mc.textTertiary,
-                                style = TextStyle(shadow = sch.shadow)
-                            )
+                // 加载更多（v2.24：简音源无分页时隐藏）
+                if (canLoadMore) {
+                    item(key = "load_more") {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable(onClick = onLoadMore)
+                                .padding(vertical = 14.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (searching) {
+                                CircularProgressIndicator(color = Mc.red, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                            } else {
+                                Text(
+                                    "加载更多",
+                                    fontSize = 12.sp,
+                                    color = if (sch.isCustom) sch.textSecondary else Mc.textTertiary,
+                                    style = TextStyle(shadow = sch.shadow)
+                                )
+                            }
                         }
                     }
+                } else {
+                    item(key = "list_footer") { Spacer(Modifier.height(20.dp)) }
                 }
             }
         }

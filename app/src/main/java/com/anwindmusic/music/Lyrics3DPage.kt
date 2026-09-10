@@ -271,6 +271,7 @@ fun Lyrics3DPage(
                             "kuwo" -> "词源 酷我"
                             "qq" -> "词源 QQ音乐"
                             "lrclib" -> "词源 LRCLIB"
+                            "meting" -> "词源 简音"
                             else -> "已缓存"
                         },
                         color = Color.White.copy(alpha = 0.35f),

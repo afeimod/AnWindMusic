@@ -157,6 +157,8 @@ fun MusicContent(
     var query by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<SongInfo>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
+    // v2.24：搜索音源（0=酷我 / 1=简音），选择持久化到设置
+    var searchSource by remember { mutableStateOf(musicSettings.searchSource) }
     var searchError by remember { mutableStateOf<String?>(null) }
     var searchPage by remember { mutableStateOf(0) }
 
@@ -318,8 +320,10 @@ fun MusicContent(
         val item = DownloadItem(song)
         downloads.add(0, item)
         uiScope.launch {
-            // 1) 解析直链
-            val urlRes = KuwoMusicApi.getPlayUrl(song.id)
+            // 1) 解析直链（v2.24：简音 Meting 音源走代理直链解析，其余走酷我解析）
+            val urlRes = song.metingServer
+                ?.let { MetingMusicApi.resolvePlayUrl(it, song.id) }
+                ?: KuwoMusicApi.getPlayUrl(song.id)
             if (urlRes.isFailure) {
                 item.failed = true
                 item.error = urlRes.exceptionOrNull()?.message ?: "获取链接失败"
@@ -465,18 +469,36 @@ fun MusicContent(
                             Page.SEARCH -> SearchPage(
                                 query = query,
                                 onQueryChange = { query = it },
+                                searchSource = searchSource,
+                                onSourceChange = { src ->
+                                    searchSource = src
+                                    updateSettings(musicSettings.copy(searchSource = src))
+                                },
                                 onSearch = { kw ->
                                     searching = true
                                     searchError = null
                                     uiScope.launch {
-                                        val r = KuwoMusicApi.search(kw, 0, 20)
-                                        if (r.isSuccess) {
-                                            searchResults = r.getOrThrow().map { SongInfo.fromKuwoSong(it) }
-                                            searchPage = 0
-                                            if (searchResults.isEmpty()) searchError = "未找到相关歌曲"
+                                        if (searchSource == MusicSettings.SEARCH_SOURCE_METING) {
+                                            // v2.24：简音音源（Meting 聚合，netease 空结果自动回落 kugou）
+                                            val r = MetingMusicApi.search(kw)
+                                            if (r.isSuccess) {
+                                                searchResults = r.getOrThrow().map { SongInfo.fromMetingSong(it) }
+                                                searchPage = 0
+                                                if (searchResults.isEmpty()) searchError = "未找到相关歌曲"
+                                            } else {
+                                                searchResults = emptyList()
+                                                searchError = r.exceptionOrNull()?.message ?: "搜索失败"
+                                            }
                                         } else {
-                                            searchResults = emptyList()
-                                            searchError = r.exceptionOrNull()?.message ?: "搜索失败"
+                                            val r = KuwoMusicApi.search(kw, 0, 20)
+                                            if (r.isSuccess) {
+                                                searchResults = r.getOrThrow().map { SongInfo.fromKuwoSong(it) }
+                                                searchPage = 0
+                                                if (searchResults.isEmpty()) searchError = "未找到相关歌曲"
+                                            } else {
+                                                searchResults = emptyList()
+                                                searchError = r.exceptionOrNull()?.message ?: "搜索失败"
+                                            }
                                         }
                                         searching = false
                                     }
@@ -484,8 +506,12 @@ fun MusicContent(
                                 results = searchResults,
                                 searching = searching,
                                 error = searchError,
+                                canLoadMore = searchSource == MusicSettings.SEARCH_SOURCE_KUWO,
                                 onLoadMore = {
-                                    if (!searching && searchResults.isNotEmpty()) {
+                                    // v2.24：仅酷我源支持分页；简音源一次返回全部结果
+                                    if (searchSource == MusicSettings.SEARCH_SOURCE_KUWO &&
+                                        !searching && searchResults.isNotEmpty()
+                                    ) {
                                         val nextPage = searchPage + 1
                                         searching = true
                                         uiScope.launch {
