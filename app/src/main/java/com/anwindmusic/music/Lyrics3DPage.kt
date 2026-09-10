@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -271,7 +272,7 @@ fun Lyrics3DPage(
                             "kuwo" -> "词源 酷我"
                             "qq" -> "词源 QQ音乐"
                             "lrclib" -> "词源 LRCLIB"
-                            "meting" -> "词源 简音"
+                            "meting" -> "词源 聚合"
                             else -> "已缓存"
                         },
                         color = Color.White.copy(alpha = 0.35f),
@@ -316,81 +317,41 @@ fun Lyrics3DPage(
                     modifier = Modifier.weight(1f).fillMaxWidth()
                 )
             } else {
-                // 3D 歌词墙（v2.24.1 双布局）：横屏左右 —— 封面+CD 嵌合居左 / 3D 墙居右；
-                // 竖屏上下 —— 封面立于光盘中心（同心）居上放大居中 / 3D 墙居下占满宽度
-                BoxWithConstraints(
+                // 3D 歌词墙：左封面+CD / 右 3D 歌词墙（横竖屏同构；v2.24.1 起
+                // CoverWithDisc 用 requiredSize 锁定设计尺寸，竖屏窄列不再被压缩变形）
+                Row(
                     Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .padding(horizontal = 24.dp)
+                        .padding(horizontal = 24.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // 方向判断在直接作用域算好再进嵌套 lambda（v2.22.1 编译约束：
-                    // maxWidth/maxHeight 不跨 composable lambda 隐式访问）
-                    val landscape = maxWidth >= maxHeight
-                    if (landscape) {
-                        Row(
-                            Modifier.fillMaxSize(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            // 左：封面 + 旋转CD（嵌合，占 38%）
-                            Box(
-                                Modifier
-                                    .fillMaxHeight()
-                                    .weight(0.38f),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CoverWithDisc(
-                                    coverUrl = coverSrc,
-                                    customCover = settings.coverImage,
-                                    customDisc = settings.discImage,
-                                    isPlaying = isPlaying,
-                                    concentric = false,
-                                    onSwitchStyle = toggleStyle
-                                )
-                            }
-
-                            // 右：3D 歌词墙（占 62%）
-                            LyricsWallArea(
-                                lyric = lyric,
-                                lyricLoading = lyricLoading,
-                                positionMs = positionMs,
-                                settingsProvider = settingsProvider,
-                                positionProvider = positionProvider,
-                                onSeek = onSeek,
-                                modifier = Modifier.weight(0.62f).fillMaxHeight()
-                            )
-                        }
-                    } else {
-                        Column(Modifier.fillMaxSize()) {
-                            // 上：封面立于光盘中心（同心，占 46%，居中放大）
-                            Box(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .weight(0.46f),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CoverWithDisc(
-                                    coverUrl = coverSrc,
-                                    customCover = settings.coverImage,
-                                    customDisc = settings.discImage,
-                                    isPlaying = isPlaying,
-                                    concentric = true,
-                                    onSwitchStyle = toggleStyle
-                                )
-                            }
-
-                            // 下：3D 歌词墙（占满宽度）
-                            LyricsWallArea(
-                                lyric = lyric,
-                                lyricLoading = lyricLoading,
-                                positionMs = positionMs,
-                                settingsProvider = settingsProvider,
-                                positionProvider = positionProvider,
-                                onSeek = onSeek,
-                                modifier = Modifier.weight(0.54f).fillMaxWidth()
-                            )
-                        }
+                    // 左：封面 + 旋转CD（嵌合，占 38%）
+                    Box(
+                        Modifier
+                            .fillMaxHeight()
+                            .weight(0.38f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CoverWithDisc(
+                            coverUrl = coverSrc,
+                            customCover = settings.coverImage,
+                            customDisc = settings.discImage,
+                            isPlaying = isPlaying,
+                            onSwitchStyle = toggleStyle
+                        )
                     }
+
+                    // 右：3D 歌词墙（占 62%）
+                    LyricsWallArea(
+                        lyric = lyric,
+                        lyricLoading = lyricLoading,
+                        positionMs = positionMs,
+                        settingsProvider = settingsProvider,
+                        positionProvider = positionProvider,
+                        onSeek = onSeek,
+                        modifier = Modifier.weight(0.62f).fillMaxHeight()
+                    )
                 }
             }
 
@@ -466,65 +427,25 @@ private fun CoverWithDisc(
     customCover: String?,
     customDisc: String?,
     isPlaying: Boolean,
-    /** v2.24.1：true = 竖屏同心模式（封面卡片立于光盘中心）；false = 嵌合模式（盘心压封面右缘） */
-    concentric: Boolean,
     /** v2.22：点击封面/光盘切到黑胶唱片机界面 */
     onSwitchStyle: () -> Unit
 ) {
     val cdAngle = rememberSpinAngle(isPlaying)
     val discBmp = rememberDiscArtwork(coverUrl, customDisc ?: customCover)
 
-    if (concentric) {
-        // v2.24.1 竖屏同心模式：大光盘为底，封面卡片居中压在盘心 —— 封面真正
-        // 「站」在光盘中心；盘缘环带露出旋转的封面盘面纹理与扫光。光盘直径随
-        // 容器宽高自适应，封面卡片为盘径的 62%（环带约占半径 19%）
-        BoxWithConstraints(contentAlignment = Alignment.Center) {
-            val discD = minOf(maxWidth.value, maxHeight.value)
-                .times(0.92f)
-                .coerceIn(140f, 320f)
-                .dp
-            val coverD = discD * 0.62f
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(discD)
-                    .clickable(onClick = onSwitchStyle)
-            ) {
-                DiscCanvas(
-                    angle = cdAngle.value,
-                    cover = discBmp.value,
-                    modifier = Modifier.size(discD)
-                )
-                if (!customCover.isNullOrEmpty()) {
-                    BgImage(
-                        customCover,
-                        Modifier
-                            .size(coverD)
-                            .shadow(18.dp, RoundedCornerShape(12.dp))
-                            .clip(RoundedCornerShape(12.dp))
-                    )
-                } else {
-                    AsyncCover(
-                        url = coverUrl,
-                        modifier = Modifier
-                            .size(coverD)
-                            .shadow(18.dp, RoundedCornerShape(12.dp))
-                            .clip(RoundedCornerShape(12.dp))
-                    )
-                }
-            }
-        }
-        return
-    }
-
-    // v2.22 嵌合式封面+光盘（横屏，对照新参考）：光盘中心正好落在封面右边缘上，
+    // v2.22 嵌合式封面+光盘（对照新参考）：光盘中心正好落在封面右边缘上，
     // 仅探出右半圆 —— 相比旧版（中心在封面内侧 29dp）整体外拉、嵌为一体；
     // 整体（封面 190 + 光盘探出 89 ≈ 279dp）超宽时按容器宽等比缩小防溢出
     BoxWithConstraints(contentAlignment = Alignment.Center) {
-        val fit = (maxWidth.value / 288f).coerceIn(0.60f, 1f)
+        // v2.24.1：下限 0.60 → 0.34 —— 竖屏窄列按真实容器宽等比缩小，不再硬撑溢出
+        val fit = (maxWidth.value / 288f).coerceIn(0.34f, 1f)
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
+                // v2.24.1：requiredSize 锁定 190dp 设计尺寸 —— 竖屏窄列下普通 size
+                // 会被父约束横向压缩（封面变矩形/盘变椭圆）、盘心偏离封面右缘
+                // （截图反馈根因）；锁定后仅按 fit 等比缩小，横竖屏嵌合关系一致
+                .requiredSize(190.dp)
                 .graphicsLayer { scaleX = fit; scaleY = fit }
                 // 整体视觉重心居中：嵌合体外探 89dp，回拉约半探出量
                 .offset(x = (-44).dp * fit)

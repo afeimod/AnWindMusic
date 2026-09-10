@@ -111,7 +111,7 @@ fun SearchPage(
             )
             listOf(
                 MusicSettings.SEARCH_SOURCE_KUWO to "酷我",
-                MusicSettings.SEARCH_SOURCE_METING to "简音"
+                MusicSettings.SEARCH_SOURCE_METING to "聚合"
             ).forEach { (src, label) ->
                 val selected = searchSource == src
                 Box(
@@ -142,7 +142,7 @@ fun SearchPage(
             }
             Text(
                 text = if (searchSource == MusicSettings.SEARCH_SOURCE_METING)
-                    "简音同款 · 网易云聚合直连"
+                    "聚合音源 · 网易云/酷狗直连"
                 else
                     "默认曲库",
                 fontSize = 10.sp,

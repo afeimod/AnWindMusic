@@ -78,7 +78,7 @@ import java.io.File
 import kotlinx.coroutines.launch
 
 /**
- * 云音乐独立版（v1.0.0，移植自 AnWind 桌面云音乐 v2.21.5）：
+ * 云音乐独立版（v1.1.0，移植自 AnWind 桌面云音乐 v2.21.5）：
  * - 纯手机布局：顶部标题栏 + 内容页 + 紧凑播放条 + 底部导航栏（对照网易云音乐手机版）
  * - 功能与桌面版一致：搜索播放、我喜欢、最近播放、本地音乐、歌曲/歌词下载、
  *   3D 歌词秀（Lyrics3DPage）、桌面歌词悬浮窗（LyricOverlayService）、设置中心

@@ -490,7 +490,7 @@ fun SettingsPage(
 
         SettingsSection("关于") {
             Caption("音源：酷我（搜索 / 播放 / 下载） · 词源：酷我 / 网易云 / QQ 音乐 / LRCLIB")
-            Caption("AnWind云音乐（独立版）v1.0.0 · 源自 AnWind 云音乐 · 3D 歌词秀 · 桌面歌词")
+            Caption("AnWind云音乐（独立版）v1.1.0 · 源自 AnWind 云音乐 · 3D 歌词秀 · 桌面歌词")
         }
         Spacer(Modifier.height(20.dp))
     }
