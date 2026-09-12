@@ -1417,15 +1417,16 @@ private fun LyricLineItem(
 // ==================== v1.2.2 竖屏长歌词单行滚动 ====================
 
 /**
- * v1.2.2 竖屏长歌词单行滚动容器（歌词墙垫底布局专用）：
- * - 行尾靠右：短行（不超宽）直接靠右静止显示；长行单行铺开（不换行不省略），
- *   尾部超出右侧被裁剪隐藏；
- * - 当前行按行内播放进度逐帧左移：可视窗口随演唱位置前移，右侧隐藏的部分
- *   播放到即滚入出现（与 KTV 扫色同一线性进度，扫色边界始终在窗口内）；
- * - 位移经指数平滑逼近目标（激活/ seek 约 0.25s 内滑到位），行唱完时目标值
- *   自然归零（右对齐原位），取消当前行也会 220ms 缓动回位；
- * - withFrameNanos 逐帧驱动 + Animatable 状态，位移在 graphicsLayer 层消费，
- *   不触发行重组；positionProvider 直读播放引擎原始位置（非 300ms tick）。
+ * v1.2.2a 竖屏长歌词单行滚动容器（歌词墙垫底布局专用）：
+ * - 行尾靠右：短行（不超宽）右移贴右缘静止显示（与 1.1 一致的靠右锚定）；
+ *   长行单行铺开（不换行不省略），行首从左缘起显，尾部超出右侧被裁剪隐藏；
+ * - 当前行按行内播放进度逐帧左移：行起始滚动量 0（行首在左缘），行末滚动量
+ *   overflow（行尾贴右缘），右侧隐藏的部分播放到即滚入出现（与 KTV 扫色
+ *   同一线性进度，扫色边界始终在窗口内）；
+ * - 位移经指数平滑逼近目标（激活/ seek 约 0.25s 内滑到位），切行后 220ms
+ *   缓动回行首；withFrameNanos 逐帧驱动 + Animatable 状态，位移在
+ *   graphicsLayer 层消费，不触发行重组；positionProvider 直读播放引擎
+ *   原始位置（非 300ms tick）。
  */
 @Composable
 private fun ScrollLyricLine(
@@ -1441,7 +1442,7 @@ private fun ScrollLyricLine(
     val dx = remember { Animatable(0f) }
     LaunchedEffect(active, lineStartMs, lineEndMs, overflow) {
         if (!active || overflow <= 0.5f) {
-            // 非当前行 / 短行：回到右对齐原位（短行本就为 0，无动作）
+            // 非当前行 / 短行：滚动量归零（长行回行首起显，短行无滚动）
             if (dx.value != 0f) dx.animateTo(0f, tween(220))
             return@LaunchedEffect
         }
@@ -1449,8 +1450,8 @@ private fun ScrollLyricLine(
         while (isActive) {
             withFrameNanos { }
             val p = ((positionProvider() - lineStartMs).toFloat() / span).coerceIn(0f, 1f)
-            // 目标位移：行起始时右移 overflow（行首从左缘起显），行末归零（回到右对齐）
-            val target = overflow * (1f - p)
+            // 目标滚动量：行起始 0（行首在左缘起显），行末 overflow（行尾贴右缘）
+            val target = overflow * p
             // 指数平滑：帧率自适应地逼近目标（0.25/帧 ≈ 0.25s 内到位），收敛后免重绘
             val next = dx.value + (target - dx.value) * 0.25f
             dx.snapTo(if (kotlin.math.abs(target - next) < 0.5f) target else next)
@@ -1462,12 +1463,19 @@ private fun ScrollLyricLine(
             .onSizeChanged { boxW = it.width.toFloat() }
             .clipToBounds()
     ) {
-        // 内层盒子按文本真实宽度布局（unbounded 突破父宽约束），右对齐为基准位，
-        // graphicsLayer 平移实现滚动；超出部分由外层 clipToBounds 裁剪
+        // 内层盒子按文本真实宽度布局（unbounded 突破父宽约束），不做任何 layout
+        // 对齐，位置完全交给 graphicsLayer：短行右移 (boxW-textW) 贴右缘（靠右），
+        // 长行随播放左移 dx 让右侧隐藏部分滚入；超出部分由外层 clipToBounds 裁剪
         Box(
             Modifier
-                .wrapContentWidth(align = Alignment.End, unbounded = true)
-                .graphicsLayer { translationX = dx.value }
+                .wrapContentWidth(unbounded = true)
+                .graphicsLayer {
+                    // 绘制期直读实时尺寸（不经组合期闭包，避免首帧错位）：
+                    // 超宽 → 随播放左移滚入右侧内容；未超宽 → 右移贴右缘（靠右）
+                    val ov = textW - boxW
+                    translationX = if (ov > 0.5f) -dx.value
+                    else (boxW - textW).coerceAtLeast(0f)
+                }
                 .onSizeChanged { textW = it.width.toFloat() }
         ) {
             content()

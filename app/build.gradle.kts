@@ -17,8 +17,8 @@ android {
         applicationId = "com.anwindmusic"
         minSdk = 24
         targetSdk = 34
-        versionCode = 7
-        versionName = "1.2.2"
+        versionCode = 8
+        versionName = "1.2.3"
 
         vectorDrawables {
             useSupportLibrary = true
