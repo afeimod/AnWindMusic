@@ -810,9 +810,11 @@ private fun PlayerBarMobile(
                     activeTrackColor = Mc.red,
                     inactiveTrackColor = if (sch.isCustom) sch.track else Color(0xFFE5E5E8)
                 ),
+                // v2.25 安卓样式同步：M3 滑块(thumb)为 20dp，原 height(16.dp) 会把滑块压扁成椭圆、
+                // 触摸目标也远小于安卓 48dp 标准；提到 32dp 后滑块圆润、轨道/滑块比例与系统一致
                 modifier = Modifier
                     .weight(1f)
-                    .height(16.dp)
+                    .height(32.dp)
                     .padding(horizontal = 6.dp)
             )
             Text(
@@ -968,7 +970,8 @@ private fun PlayerBarMobile(
                 }
             }
 
-            // 音量
+            // 音量（v2.25 安卓样式同步：桌面版遗留的 84x16dp 小滑条不符合安卓 Material 规格 ——
+            // 滑块被压扁、可点区域过小；改为 112x32dp 标准比例，滑块圆润、拖动跟手）
             Icon(
                 Icons.AutoMirrored.Filled.VolumeUp,
                 contentDescription = "音量",
@@ -985,8 +988,8 @@ private fun PlayerBarMobile(
                     inactiveTrackColor = if (sch.isCustom) sch.track else Color(0xFFE5E5E8)
                 ),
                 modifier = Modifier
-                    .width(84.dp)
-                    .height(16.dp)
+                    .width(112.dp)
+                    .height(32.dp)
             )
         }
     }

@@ -756,8 +756,9 @@ private fun SettingSwitch(
                     checkedTrackColor = Mc.red,
                     uncheckedThumbColor = Color.White,
                     uncheckedTrackColor = Color(0xFFC9C9CF)
-                ),
-                modifier = Modifier.height(24.dp)
+                )
+                // v2.25 安卓样式同步：去掉 height(24.dp) 压缩 —— M3 标准开关为 52x32dp，
+                // 强压 24dp 会把轨道/滑块压扁，与系统设置里的开关观感不一致
             )
         }
         Text(

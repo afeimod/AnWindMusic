@@ -116,6 +116,12 @@ import kotlin.math.roundToInt
  *
  * v2.19 设置即时生效机制保留：组合期在自身作用域直读快照 State（settingsProvider()），
  * 滑条一变直接失效重组/重绘，不依赖参数链传递。
+ *
+ * v2.25 控制条缩位（两个界面同步）：
+ * - 原页面底部全宽控制条（模式/上一首/播放/下一首 + 进度）整体缩小约 35%，
+ *   移到左列封面/光盘（黑胶界面为唱片）正下方，两界面同构；
+ * - 页面下部完全让给 3D 歌词墙，沉浸感更强；
+ * - 播放器主界面的音量条/进度条同步修复为标准安卓 Material 尺寸（thumb 不再被压扁）。
  */
 @Composable
 fun Lyrics3DPage(
@@ -300,8 +306,10 @@ fun Lyrics3DPage(
             }
 
             // ---- 主体：v2.22 歌词秀双界面 —— 3D 歌词墙 / 黑胶唱片机 ----
+            // v2.25：进度条与上一首/播放/下一首等控制条整体缩小，从页面底部移到
+            // 左列封面/光盘正下方（两个界面同构），页面下部完全让给歌词墙
             if (vinylStyle) {
-                // 黑胶唱片机（对照参考图2）：左歌词 + 右旋转黑胶 + 唱针，点击唱片切回 3D 墙
+                // 黑胶唱片机（对照参考图2）：左黑胶 + 唱针 + 左列底部紧凑控制条，点击唱片切回 3D 墙
                 VinylBody(
                     coverUrl = coverSrc,
                     customCover = settings.coverImage,
@@ -310,9 +318,16 @@ fun Lyrics3DPage(
                     lyric = lyric,
                     lyricLoading = lyricLoading,
                     positionMs = positionMs,
+                    durationMs = durationMs,
+                    isPreparing = isPreparing,
+                    playMode = playMode,
                     settingsProvider = settingsProvider,
                     positionProvider = positionProvider,
                     onSeek = onSeek,
+                    onToggle = onToggle,
+                    onNext = onNext,
+                    onPrev = onPrev,
+                    onCycleMode = onCycleMode,
                     onToggleStyle = toggleStyle,
                     modifier = Modifier.weight(1f).fillMaxWidth()
                 )
@@ -326,19 +341,38 @@ fun Lyrics3DPage(
                         .padding(horizontal = 24.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // 左：封面 + 旋转CD（嵌合，占 38%）
-                    Box(
+                    // 左：封面 + 旋转CD（嵌合）+ 其正下方的紧凑控制条（占 38%）
+                    Column(
                         Modifier
                             .fillMaxHeight()
-                            .weight(0.38f),
-                        contentAlignment = Alignment.Center
+                            .weight(0.38f)
                     ) {
-                        CoverWithDisc(
-                            coverUrl = coverSrc,
-                            customCover = settings.coverImage,
-                            customDisc = settings.discImage,
+                        Box(
+                            Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CoverWithDisc(
+                                coverUrl = coverSrc,
+                                customCover = settings.coverImage,
+                                customDisc = settings.discImage,
+                                isPlaying = isPlaying,
+                                onSwitchStyle = toggleStyle
+                            )
+                        }
+                        // v2.25：控制条缩小后放封面/光盘正下方
+                        CompactControls(
+                            positionMs = positionMs,
+                            durationMs = durationMs,
                             isPlaying = isPlaying,
-                            onSwitchStyle = toggleStyle
+                            isPreparing = isPreparing,
+                            playMode = playMode,
+                            onSeek = onSeek,
+                            onToggle = onToggle,
+                            onNext = onNext,
+                            onPrev = onPrev,
+                            onCycleMode = onCycleMode
                         )
                     }
 
@@ -354,20 +388,6 @@ fun Lyrics3DPage(
                     )
                 }
             }
-
-            // ---- 底部控制条：模式/上一首/播放/下一首 + 进度 ----
-            BottomControls(
-                positionMs = positionMs,
-                durationMs = durationMs,
-                isPlaying = isPlaying,
-                isPreparing = isPreparing,
-                playMode = playMode,
-                onSeek = onSeek,
-                onToggle = onToggle,
-                onNext = onNext,
-                onPrev = onPrev,
-                onCycleMode = onCycleMode
-            )
         }
     }
 }
@@ -632,6 +652,7 @@ private fun DiscCenterOverlay(modifier: Modifier = Modifier) {
 /**
  * 黑胶唱片机样式歌词页（v2.23 与默认 3D 墙同构的左右布局）：
  * - 左：旋转黑胶 + 唱针臂（播放搭在纹路上/暂停抬起），点击切回 3D 歌词墙界面；
+ *   v2.25 控制条整体缩小后移到黑胶正下方（与默认界面的封面下方位置同构）；
  * - 右：与默认界面完全同一套 3D 透视歌词墙（俯仰/偏航/纵深/KTV 渐进），点击行跳转；
  * - 横竖屏均保持左右排布（与默认界面一致），切换界面时歌词始终在右侧、主体在左侧；
  * - 样式经 settings.json 持久化（toggleStyle 由 Lyrics3DPage 注入）
@@ -645,9 +666,16 @@ private fun VinylBody(
     lyric: LyricsDoc?,
     lyricLoading: Boolean,
     positionMs: Long,
+    durationMs: Long,
+    isPreparing: Boolean,
+    playMode: Int,
     settingsProvider: () -> MusicSettings,
     positionProvider: () -> Long,
     onSeek: (Long) -> Unit,
+    onToggle: () -> Unit,
+    onNext: () -> Unit,
+    onPrev: () -> Unit,
+    onCycleMode: () -> Unit,
     onToggleStyle: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -655,20 +683,39 @@ private fun VinylBody(
         modifier.fillMaxSize().padding(horizontal = 24.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 左：黑胶唱片（列宽占比与默认界面的封面列一致）
-        Box(
+        // 左：黑胶唱片 + 其正下方的紧凑控制条（列宽占比与默认界面的封面列一致）
+        Column(
             Modifier
                 .fillMaxHeight()
-                .weight(0.38f),
-            contentAlignment = Alignment.Center
+                .weight(0.38f)
         ) {
-            VinylDiscUnit(
-                coverUrl = coverUrl,
-                customCover = customCover,
-                customDisc = customDisc,
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                VinylDiscUnit(
+                    coverUrl = coverUrl,
+                    customCover = customCover,
+                    customDisc = customDisc,
+                    isPlaying = isPlaying,
+                    onToggleStyle = onToggleStyle,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            // v2.25：控制条缩小后放黑胶唱片正下方
+            CompactControls(
+                positionMs = positionMs,
+                durationMs = durationMs,
                 isPlaying = isPlaying,
-                onToggleStyle = onToggleStyle,
-                modifier = Modifier.fillMaxSize()
+                isPreparing = isPreparing,
+                playMode = playMode,
+                onSeek = onSeek,
+                onToggle = onToggle,
+                onNext = onNext,
+                onPrev = onPrev,
+                onCycleMode = onCycleMode
             )
         }
         // 右：3D 歌词墙（与默认界面同一套）
@@ -1183,10 +1230,18 @@ private fun KtvSweepText(
     }
 }
 
-// ==================== 底部控制条 ====================
+// ==================== 紧凑控制条（v2.25） ====================
 
+/**
+ * v2.25 紧凑控制条 —— 由原页面底部全宽 BottomControls 缩小而来：
+ * - 位置：两个歌词界面（3D 歌词墙 / 黑胶唱片机）左列封面/光盘正下方；
+ * - 尺寸：播放键 44dp→34dp、前后曲/模式图标 28/18dp→18/14dp、进度条 22dp→20dp、
+ *   时间字号 11sp→9sp，整体高度约缩小 35%；改用小尺寸可点击 Icon（不再用 48dp
+ *   最小触摸目标的 IconButton），宽度可收进 38% 窄列；
+ * - 进度时间改为 Android 常见的「已播 / 总时长」分列滑条两端样式。
+ */
 @Composable
-private fun BottomControls(
+private fun CompactControls(
     positionMs: Long,
     durationMs: Long,
     isPlaying: Boolean,
@@ -1205,15 +1260,60 @@ private fun BottomControls(
     Column(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 26.dp, vertical = 10.dp)
+            .padding(top = 2.dp, bottom = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // 按钮行
+        // 细进度条 + 两端时间（已播 | 滑条 | 总时长）
         Row(
             Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            Text(
+                text = fmtTime(if (userSeeking) seekPos.toLong() else positionMs),
+                color = Color.White.copy(alpha = 0.55f),
+                fontSize = 9.sp
+            )
+            Slider(
+                value = if (userSeeking) seekPos else positionMs.coerceAtMost(durationMs).toFloat(),
+                valueRange = 0f..maxPos,
+                onValueChange = {
+                    userSeeking = true
+                    seekPos = it
+                },
+                onValueChangeFinished = {
+                    onSeek(seekPos.toLong())
+                    userSeeking = false
+                },
+                colors = SliderDefaults.colors(
+                    thumbColor = Color.White,
+                    activeTrackColor = Color.White.copy(alpha = 0.9f),
+                    inactiveTrackColor = Color.White.copy(alpha = 0.22f)
+                ),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(20.dp)
+                    .padding(horizontal = 3.dp)
+            )
+            Text(
+                text = fmtTime(durationMs),
+                color = Color.White.copy(alpha = 0.55f),
+                fontSize = 9.sp
+            )
+        }
+
+        // 按钮行：播放模式 / 上一首 / 播放暂停 / 下一首（紧凑居中）
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
             // 播放模式
-            IconButton(onClick = onCycleMode) {
+            Box(
+                Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onCycleMode),
+                contentAlignment = Alignment.Center
+            ) {
                 Icon(
                     imageVector = when (playMode) {
                         Store.MODE_LOOP_ONE -> Icons.Filled.RepeatOne
@@ -1222,24 +1322,28 @@ private fun BottomControls(
                     },
                     contentDescription = "播放模式",
                     tint = Color.White.copy(alpha = 0.75f),
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(14.dp)
                 )
             }
-            Spacer(Modifier.width(10.dp))
             // 上一首
-            IconButton(onClick = onPrev) {
+            Box(
+                Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onPrev),
+                contentAlignment = Alignment.Center
+            ) {
                 Icon(
                     Icons.Filled.SkipPrevious,
                     contentDescription = "上一首",
                     tint = Color.White,
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier.size(19.dp)
                 )
             }
-            Spacer(Modifier.width(10.dp))
-            // 播放/暂停（圆环按钮，对应图1 左下）
+            // 播放/暂停（缩小圆环按钮）
             Box(
                 Modifier
-                    .size(44.dp)
+                    .size(34.dp)
                     .clip(CircleShape)
                     .background(Color.White.copy(alpha = 0.12f))
                     .clickable(onClick = onToggle),
@@ -1249,55 +1353,32 @@ private fun BottomControls(
                     CircularProgressIndicator(
                         color = Color.White,
                         strokeWidth = 2.dp,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(14.dp)
                     )
                 } else {
                     Icon(
                         imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                         contentDescription = if (isPlaying) "暂停" else "播放",
                         tint = Color.White,
-                        modifier = Modifier.size(26.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
-            Spacer(Modifier.width(10.dp))
-            IconButton(onClick = onNext) {
+            // 下一首
+            Box(
+                Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onNext),
+                contentAlignment = Alignment.Center
+            ) {
                 Icon(
                     Icons.Filled.SkipNext,
                     contentDescription = "下一首",
                     tint = Color.White,
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier.size(19.dp)
                 )
             }
-            Spacer(Modifier.weight(1f))
-            // 进度时间
-            Text(
-                text = "${fmtTime(positionMs)} / ${fmtTime(durationMs)}",
-                color = Color.White.copy(alpha = 0.55f),
-                fontSize = 11.sp
-            )
         }
-
-        // 细进度条
-        Slider(
-            value = if (userSeeking) seekPos else positionMs.coerceAtMost(durationMs).toFloat(),
-            valueRange = 0f..maxPos,
-            onValueChange = {
-                userSeeking = true
-                seekPos = it
-            },
-            onValueChangeFinished = {
-                onSeek(seekPos.toLong())
-                userSeeking = false
-            },
-            colors = SliderDefaults.colors(
-                thumbColor = Color.White,
-                activeTrackColor = Color.White.copy(alpha = 0.9f),
-                inactiveTrackColor = Color.White.copy(alpha = 0.22f)
-            ),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(22.dp)
-        )
     }
 }
