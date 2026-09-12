@@ -66,7 +66,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-    /** v1.2 系统文件管理器选视频（ACTION_OPEN_DOCUMENT，video/*）：
+    /** v1.2 系统文件管理器选视频（ACTION_OPEN_DOCUMENT，仅 video 类型）：
      *  用途为主页/歌词页背景视频；结果同样复制到私有目录后经 PickBus 回传 */
     private val videoPicker =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
