@@ -367,7 +367,7 @@ fun SettingsPage(
                 checked = settings.showTranslation,
                 onChange = { onChange(settings.copy(showTranslation = it)) }
             )
-            Caption("真透视歌词墙：整面墙俯仰/偏航 + 纵深收敛 + 行内逐字左右字体差（行首小行尾大）；俯仰 0° + 视角 0° + 纵深 0 + 字体差 0 即为平面滚动歌词；非高亮颜色同步作用于非当前行、翻译行与 KTV 未唱部分；竖屏时歌词墙全宽垫底、长行延伸至光盘背后（v1.2.1）")
+            Caption("真透视歌词墙：整面墙俯仰/偏航 + 纵深收敛 + 行内逐字左右字体差（行首小行尾大）；俯仰 0° + 视角 0° + 纵深 0 + 字体差 0 即为平面滚动歌词；非高亮颜色同步作用于非当前行、翻译行与 KTV 未唱部分；竖屏时行尾靠右，长行单行随播放滚动显出右侧隐藏部分（不换行，v1.2.2）")
         }
 
         SettingsSection("桌面歌词") {
@@ -559,7 +559,7 @@ fun SettingsPage(
 
         SettingsSection("关于") {
             Caption("音源：酷我（搜索 / 播放 / 下载） · 词源：酷我 / 网易云 / QQ 音乐 / LRCLIB")
-            Caption("AnWind云音乐（独立版）v1.2.1 · 源自 AnWind 云音乐 · 3D 歌词秀 · 桌面歌词 · 视频背景")
+            Caption("AnWind云音乐（独立版）v1.2.2 · 源自 AnWind 云音乐 · 3D 歌词秀 · 桌面歌词 · 视频背景")
         }
         Spacer(Modifier.height(20.dp))
     }

@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -59,10 +60,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
@@ -80,6 +83,7 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -94,6 +98,7 @@ import androidx.compose.ui.unit.sp
 import com.anwindmusic.R
 import com.anwindmusic.music.MusicStore as Store
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlin.math.roundToInt
 
 /**
@@ -132,8 +137,9 @@ import kotlin.math.roundToInt
  *
  * v1.2 三项新增：
  * - ① 自定义视频背景（BG_VIDEO）：主页与歌词页均可选本地视频静音循环铺底；
- * - ② 竖屏歌词优化（v1.2.1 定稿）：竖屏恢复左右分栏原版光盘位置，改为「歌词墙垫底」
- *   —— 歌词墙全宽铺底、长行自然延伸至光盘/唱片背后，短行居中不遮挡；
+ * - ② 竖屏歌词优化（v1.2.2 定稿）：竖屏恢复左右分栏原版光盘位置，改为「歌词墙垫底」
+ *   —— 歌词墙全宽铺底，行尾靠右；长行单行铺开不换行，尾部超出右侧隐藏，
+ *   随行内播放进度逐帧左移滚入出现（与 KTV 扫色同速）；
  *   横屏保持左右分栏（封面列 38% / 歌词墙 62%）不变；
  * - ③ 非高亮歌词颜色自定义（lyricSubColor）：非当前行、翻译行与 KTV 未唱部分跟随该色。
  */
@@ -847,7 +853,7 @@ private fun OverlayBody(
     mainUnit: @Composable () -> Unit
 ) {
     Box(Modifier.fillMaxSize()) {
-        // 底层：全宽 3D 歌词墙（长行延伸至主体背后，短行居中）
+        // 底层：全宽 3D 歌词墙（行尾靠右；长行单行随播放滚动，延伸至主体背后）
         LyricsWallArea(
             lyric = lyric,
             lyricLoading = lyricLoading,
@@ -855,6 +861,7 @@ private fun OverlayBody(
             settingsProvider = settingsProvider,
             positionProvider = positionProvider,
             onSeek = onSeek,
+            singleLineScroll = true,
             modifier = Modifier.matchParentSize()
         )
         // 上层：左列主体 + 控制条（原位悬浮；列外区域点击穿透给歌词墙）
@@ -930,6 +937,8 @@ private fun LyricsWallArea(
     settingsProvider: () -> MusicSettings,
     positionProvider: () -> Long,
     onSeek: (Long) -> Unit,
+    /** v1.2.2 竖屏歌词墙垫底布局：行尾靠右；长行单行随播放滚动，不换行 */
+    singleLineScroll: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Box(modifier) {
@@ -940,6 +949,7 @@ private fun LyricsWallArea(
                 settingsProvider = settingsProvider,
                 positionProvider = positionProvider,
                 onSeek = onSeek,
+                singleLineScroll = singleLineScroll,
                 modifier = Modifier.fillMaxSize()
             )
         } else {
@@ -1176,6 +1186,7 @@ private fun LyricsWall(
     settingsProvider: () -> MusicSettings,
     positionProvider: () -> Long,
     onSeek: (Long) -> Unit,
+    singleLineScroll: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val idx = remember(positionMs, doc) { doc.indexAt(positionMs) }
@@ -1215,6 +1226,7 @@ private fun LyricsWall(
                     lineEndMs = doc.lines.getOrNull(i + 1)?.timeMs ?: (line.timeMs + 6000L),
                     settingsProvider = settingsProvider,
                     positionProvider = positionProvider,
+                    singleLineScroll = singleLineScroll,
                     onClick = { onSeek(line.timeMs) }
                 )
             }
@@ -1250,6 +1262,8 @@ private fun LyricLineItem(
     lineEndMs: Long,
     settingsProvider: () -> MusicSettings,
     positionProvider: () -> Long,
+    /** v1.2.2 竖屏歌词墙垫底布局：行尾靠右；长行单行随播放滚动，不换行 */
+    singleLineScroll: Boolean = false,
     onClick: () -> Unit
 ) {
     // 组合期读取（v2.19）：字号/发光/翻译/动画开关 —— 所在作用域直读快照 State
@@ -1269,7 +1283,7 @@ private fun LyricLineItem(
     val lineAlpha = if (active) 1f else (1f - absDist * 0.13f).coerceIn(0.12f, 1f)
 
     Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
+        horizontalAlignment = if (singleLineScroll) Alignment.End else Alignment.CenterHorizontally,
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
@@ -1293,17 +1307,74 @@ private fun LyricLineItem(
     ) {
         if (active && settings.ktvMode) {
             // v2.21 KTV 渐进样式：未唱字用「非高亮颜色」半透明打底，已唱高亮色按播放进度从左向右扫开
-            KtvSweepText(
-                text = line.text.ifBlank { "···" },
-                fontSizeSp = settings.lyricFontSize,
-                diff = settings.lineYaw3d / 100f,
-                fillColor = Color(settings.highlightColor),
-                baseColor = Color(settings.lyricSubColor),
-                glow = settings.lyricGlow,
+            if (singleLineScroll) {
+                // v1.2.2 竖屏单行滚动：扫色边界与滚动窗口同一线性进度，
+                // 未唱部分藏在窗口右缘外，播放到即随扫色一并出现
+                ScrollLyricLine(
+                    active = active,
+                    lineStartMs = line.timeMs,
+                    lineEndMs = lineEndMs,
+                    positionProvider = positionProvider
+                ) {
+                    KtvSweepText(
+                        text = line.text.ifBlank { "···" },
+                        fontSizeSp = settings.lyricFontSize,
+                        diff = settings.lineYaw3d / 100f,
+                        fillColor = Color(settings.highlightColor),
+                        baseColor = Color(settings.lyricSubColor),
+                        glow = settings.lyricGlow,
+                        lineStartMs = line.timeMs,
+                        lineEndMs = lineEndMs,
+                        positionProvider = positionProvider,
+                        singleLine = true
+                    )
+                }
+            } else {
+                KtvSweepText(
+                    text = line.text.ifBlank { "···" },
+                    fontSizeSp = settings.lyricFontSize,
+                    diff = settings.lineYaw3d / 100f,
+                    fillColor = Color(settings.highlightColor),
+                    baseColor = Color(settings.lyricSubColor),
+                    glow = settings.lyricGlow,
+                    lineStartMs = line.timeMs,
+                    lineEndMs = lineEndMs,
+                    positionProvider = positionProvider
+                )
+            }
+        } else if (singleLineScroll) {
+            // v1.2.2 竖屏单行滚动（非 KTV 样式）：单行铺开不换行，超出右侧由滚动容器隐藏
+            ScrollLyricLine(
+                active = active,
                 lineStartMs = line.timeMs,
                 lineEndMs = lineEndMs,
                 positionProvider = positionProvider
-            )
+            ) {
+                Text(
+                    text = ltrSizedText(
+                        line.text.ifBlank { "···" },
+                        (if (active) settings.lyricFontSize else settings.lyricFontSize * 0.77f).toFloat(),
+                        settings.lineYaw3d / 100f
+                    ),
+                    fontSize = if (active) settings.lyricFontSize.sp
+                    else (settings.lyricFontSize * 0.77f).roundToInt().sp,
+                    fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                    color = if (active) Color(settings.highlightColor) else Color(settings.lyricSubColor),
+                    style = if (active && settings.lyricGlow) {
+                        TextStyle(
+                            shadow = Shadow(
+                                color = Color(settings.highlightColor).copy(alpha = 0.75f),
+                                blurRadius = 22f
+                            )
+                        )
+                    } else {
+                        TextStyle.Default
+                    },
+                    softWrap = false,
+                    maxLines = 1,
+                    overflow = TextOverflow.Visible
+                )
+            }
         } else {
             Text(
                 text = ltrSizedText(
@@ -1343,12 +1414,74 @@ private fun LyricLineItem(
     }
 }
 
+// ==================== v1.2.2 竖屏长歌词单行滚动 ====================
+
+/**
+ * v1.2.2 竖屏长歌词单行滚动容器（歌词墙垫底布局专用）：
+ * - 行尾靠右：短行（不超宽）直接靠右静止显示；长行单行铺开（不换行不省略），
+ *   尾部超出右侧被裁剪隐藏；
+ * - 当前行按行内播放进度逐帧左移：可视窗口随演唱位置前移，右侧隐藏的部分
+ *   播放到即滚入出现（与 KTV 扫色同一线性进度，扫色边界始终在窗口内）；
+ * - 位移经指数平滑逼近目标（激活/ seek 约 0.25s 内滑到位），行唱完时目标值
+ *   自然归零（右对齐原位），取消当前行也会 220ms 缓动回位；
+ * - withFrameNanos 逐帧驱动 + Animatable 状态，位移在 graphicsLayer 层消费，
+ *   不触发行重组；positionProvider 直读播放引擎原始位置（非 300ms tick）。
+ */
+@Composable
+private fun ScrollLyricLine(
+    active: Boolean,
+    lineStartMs: Long,
+    lineEndMs: Long,
+    positionProvider: () -> Long,
+    content: @Composable () -> Unit
+) {
+    var boxW by remember { mutableStateOf(0f) }
+    var textW by remember { mutableStateOf(0f) }
+    val overflow = (textW - boxW).coerceAtLeast(0f)
+    val dx = remember { Animatable(0f) }
+    LaunchedEffect(active, lineStartMs, lineEndMs, overflow) {
+        if (!active || overflow <= 0.5f) {
+            // 非当前行 / 短行：回到右对齐原位（短行本就为 0，无动作）
+            if (dx.value != 0f) dx.animateTo(0f, tween(220))
+            return@LaunchedEffect
+        }
+        val span = (lineEndMs - lineStartMs).coerceAtLeast(1000L)
+        while (isActive) {
+            withFrameNanos { }
+            val p = ((positionProvider() - lineStartMs).toFloat() / span).coerceIn(0f, 1f)
+            // 目标位移：行起始时右移 overflow（行首从左缘起显），行末归零（回到右对齐）
+            val target = overflow * (1f - p)
+            // 指数平滑：帧率自适应地逼近目标（0.25/帧 ≈ 0.25s 内到位），收敛后免重绘
+            val next = dx.value + (target - dx.value) * 0.25f
+            dx.snapTo(if (kotlin.math.abs(target - next) < 0.5f) target else next)
+        }
+    }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .onSizeChanged { boxW = it.width.toFloat() }
+            .clipToBounds()
+    ) {
+        // 内层盒子按文本真实宽度布局（unbounded 突破父宽约束），右对齐为基准位，
+        // graphicsLayer 平移实现滚动；超出部分由外层 clipToBounds 裁剪
+        Box(
+            Modifier
+                .wrapContentWidth(align = Alignment.End, unbounded = true)
+                .graphicsLayer { translationX = dx.value }
+                .onSizeChanged { textW = it.width.toFloat() }
+        ) {
+            content()
+        }
+    }
+}
+
 /**
  * KTV 渐进填充文本（v2.21）：底层未唱字 + 上层高亮色已唱文字，
  * clipRect 按行内播放进度从左向右扫开。
  * 50ms 节拍直读 positionProvider（MusicEngine.rawPositionMs()，MediaPlayer 原生位置，
  * 非 300ms 状态 tick），扫色平滑；状态读发生在绘制阶段，不触发重组。
  * v1.2：未唱打底色由固定白改为「非高亮歌词颜色」半透明（lyricSubColor）。
+ * v1.2.2：singleLine 时真单行布局（不换行不省略），超出部分由外层滚动容器裁剪滚动。
  */
 @Composable
 private fun KtvSweepText(
@@ -1361,7 +1494,9 @@ private fun KtvSweepText(
     glow: Boolean,
     lineStartMs: Long,
     lineEndMs: Long,
-    positionProvider: () -> Long
+    positionProvider: () -> Long,
+    /** v1.2.2 竖屏单行滚动：真单行（不换行不省略），超出由外层滚动容器裁剪 */
+    singleLine: Boolean = false
 ) {
     var frac by remember(lineStartMs, lineEndMs) { mutableStateOf(0f) }
     LaunchedEffect(lineStartMs, lineEndMs) {
@@ -1385,8 +1520,9 @@ private fun KtvSweepText(
             fontWeight = FontWeight.Bold,
             color = baseColor.copy(alpha = 0.40f),
             style = glowStyle,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
+            softWrap = !singleLine,
+            maxLines = if (singleLine) 1 else 2,
+            overflow = if (singleLine) TextOverflow.Visible else TextOverflow.Ellipsis
         )
         Text(
             text = sized,
@@ -1394,8 +1530,9 @@ private fun KtvSweepText(
             fontWeight = FontWeight.Bold,
             color = fillColor,
             style = glowStyle,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
+            softWrap = !singleLine,
+            maxLines = if (singleLine) 1 else 2,
+            overflow = if (singleLine) TextOverflow.Visible else TextOverflow.Ellipsis,
             modifier = Modifier.drawWithContent {
                 clipRect(right = size.width * frac) { this@drawWithContent.drawContent() }
             }
