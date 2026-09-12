@@ -34,7 +34,7 @@ import kotlinx.coroutines.withContext
 /**
  * AnWindMusic —— AnWind 云音乐独立版入口 Activity：
  * - 承载 MusicContent（纯 Compose 手机布局）
- * - 系统文件管理器选图（DocumentsUI 分类界面）/ 文件夹选择器（结果经 PickBus 回传播放器）
+ * - 系统文件管理器选图/选视频（DocumentsUI 分类界面）/ 文件夹选择器（结果经 PickBus 回传播放器）
  * - 运行时权限：音频读取（本地扫描）+ 通知（Android 13+）
  * - 默认全屏 edge-to-edge：内容延伸到状态栏/导航栏后面，占用刘海区域；
  *   交互控件经 insets 避让，不被系统栏/虚拟按键遮挡
@@ -42,7 +42,7 @@ import kotlinx.coroutines.withContext
  */
 class MainActivity : ComponentActivity() {
 
-    /** 当前图片选择用途（homeImage / lyricImage / coverImage / discImage） */
+    /** 当前图片/视频选择用途（homeImage / lyricImage / coverImage / discImage / homeVideo / lyricVideo） */
     private var pendingPickKind: String? = null
 
     /** 沉浸式全屏状态（歌词页用；manifest 已锁 configChanges 避免旋转重建丢失） */
@@ -62,6 +62,23 @@ class MainActivity : ComponentActivity() {
                     PickBus.publish(path)
                 } else {
                     Toast.makeText(this@MainActivity, "图片读取失败，请重试", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+
+    /** v1.2 系统文件管理器选视频（ACTION_OPEN_DOCUMENT，video/*）：
+     *  用途为主页/歌词页背景视频；结果同样复制到私有目录后经 PickBus 回传 */
+    private val videoPicker =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            val kind = pendingPickKind
+            pendingPickKind = null
+            if (uri == null || kind == null) return@registerForActivityResult
+            lifecycleScope.launch {
+                val path = withContext(Dispatchers.IO) { copyUriToInternal(uri, kind) }
+                if (path != null) {
+                    PickBus.publish(path)
+                } else {
+                    Toast.makeText(this@MainActivity, "视频读取失败，请重试", Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -100,6 +117,15 @@ class MainActivity : ComponentActivity() {
                             imagePicker.launch(arrayOf("image/*"))
                         }.onFailure {
                             Toast.makeText(this, "无法打开图片选择器", Toast.LENGTH_SHORT).show()
+                            pendingPickKind = null
+                        }
+                    },
+                    onPickVideo = { kind ->
+                        pendingPickKind = kind
+                        runCatching {
+                            videoPicker.launch(arrayOf("video/*"))
+                        }.onFailure {
+                            Toast.makeText(this, "无法打开视频选择器", Toast.LENGTH_SHORT).show()
                             pendingPickKind = null
                         }
                     },
@@ -208,15 +234,20 @@ class MainActivity : ComponentActivity() {
     // ==================== SAF 结果处理 ====================
 
     /**
-     * 把选中的图片复制到应用私有目录并返回绝对路径。
-     * 相比直接存 content:// URI：无授权过期/重启失效问题，BgImage 直接按文件路径读取。
+     * 把选中的图片/视频复制到应用私有目录并返回绝对路径。
+     * 相比直接存 content:// URI：无授权过期/重启失效问题，BgImage/BgVideo 直接按文件路径读取。
      */
     private fun copyUriToInternal(uri: Uri, kind: String): String? = runCatching {
         val ext = when (contentResolver.getType(uri)) {
             "image/png" -> "png"
             "image/webp" -> "webp"
             "image/gif" -> "gif"
-            else -> "jpg"
+            "video/mp4" -> "mp4"
+            "video/webm" -> "webm"
+            "video/x-matroska" -> "mkv"
+            "video/quicktime" -> "mov"
+            "video/3gpp" -> "3gp"
+            else -> if (kind.endsWith("Video")) "mp4" else "jpg"
         }
         val dir = File(filesDir, "picked_images").apply { mkdirs() }
         val out = File(dir, "${kind}_${System.currentTimeMillis()}.$ext")

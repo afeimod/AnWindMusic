@@ -4,7 +4,10 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
+import android.media.MediaPlayer
 import android.net.Uri
+import android.view.Surface
+import android.view.TextureView
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -17,6 +20,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -40,6 +44,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -47,7 +52,9 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
@@ -55,12 +62,17 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.anwindmusic.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -700,5 +712,151 @@ fun BgImage(src: String?, modifier: Modifier = Modifier) {
             contentScale = ContentScale.Crop,
             modifier = modifier
         )
+    }
+}
+
+/**
+ * 自定义背景视频组件（v1.2 新增）：播放本地视频文件，静音 + 循环 + 无控件，
+ * 等比 cover 铺满裁剪（ContentScale.Crop 等效），加载中/失败时透明由调用方兜底。
+ * - TextureView + MediaPlayer：TextureView 属普通视图层，缩放/透明度/层序全兼容；
+ *   不用 VideoView（其 SurfaceView 在 Android 12 以下不参与 View 变换，cover 会失效留黑边）
+ * - cover 实现：按视频宽高比直接计算 TextureView 布局尺寸（短边贴边、长边溢出居中），
+ *   参与真实 measure，旋转/分屏随重组即时更新，溢出由 clipToBounds 裁掉
+ * - 静音：setVolume(0,0) 且不请求音频焦点，背景视频不打断/不混入音乐播放
+ * - 生命周期：退后台/锁屏自动暂停省电，回前台自动续播；src 变化整体重建播放器；
+ *   组件离开组合时 release 释放解码器
+ * - active=false（所在页被覆盖，如主页背景被歌词页盖住）时暂停并保留最后一帧，
+ *   恢复 true 时续播 —— 过渡无闪白且不后台空耗
+ * - 解码失败（不支持编码等）静默降级为透明，不影响上层内容可读性
+ */
+@Composable
+fun BgVideo(src: String?, modifier: Modifier = Modifier, active: Boolean = true) {
+    if (src.isNullOrEmpty()) return
+    val lifecycleOwner = LocalLifecycleOwner.current
+    BoxWithConstraints(modifier) {
+        // 容器像素尺寸（cover 布局计算用，旋转/分屏时随重组刷新）
+        val cw = constraints.maxWidth.toFloat().coerceAtLeast(1f)
+        val ch = constraints.maxHeight.toFloat().coerceAtLeast(1f)
+        key(src) {
+            // 视频尺寸 / prepared / surface 就绪（驱动 cover 布局与播放控制）
+            var videoSize by remember { mutableStateOf<Size?>(null) }
+            var prepared by remember { mutableStateOf(false) }
+            var surfaceReady by remember { mutableStateOf(false) }
+
+            // MediaPlayer：key(src) 使 src 变化时整体重建；离开组合 release
+            val player = remember {
+                runCatching {
+                    MediaPlayer().apply {
+                        setDataSource(src)
+                        setOnPreparedListener { mp ->
+                            prepared = true
+                            if (mp.videoWidth > 0 && mp.videoHeight > 0) {
+                                videoSize = Size(mp.videoWidth.toFloat(), mp.videoHeight.toFloat())
+                            }
+                        }
+                        // 解码/播放失败：吞掉系统错误弹窗，透明兜底
+                        setOnErrorListener { _, _, _ -> true }
+                        setLooping(true)
+                        setVolume(0f, 0f)   // 静音：背景视频不干扰音乐播放
+                        prepareAsync()
+                    }
+                }.getOrNull()
+            }
+
+            // 播放控制：active + prepared + surface 就绪 → 播放；任一不满足 → 暂停
+            // （覆盖起播/切 active/被覆盖后恢复/组合重建等全部时序）
+            LaunchedEffect(player, prepared, surfaceReady, active) {
+                val p = player ?: return@LaunchedEffect
+                if (!prepared) return@LaunchedEffect
+                if (active && surfaceReady) {
+                    runCatching { p.start() }
+                } else {
+                    runCatching { if (p.isPlaying) p.pause() }
+                }
+            }
+
+            // 生命周期：退后台/锁屏暂停省电，回前台续播（仅 active 且已就绪时）
+            // key 含 active：active 是重组参数，observer 闭包需随 active 变化重建，
+            // 否则歌词页打开（active=false）后回前台仍会按旧值误恢复主页视频
+            DisposableEffect(lifecycleOwner, player, active) {
+                val obs = LifecycleEventObserver { _, event ->
+                    when (event) {
+                        Lifecycle.Event.ON_PAUSE ->
+                            player?.let { p -> runCatching { if (p.isPlaying) p.pause() } }
+                        Lifecycle.Event.ON_RESUME ->
+                            if (active && prepared && surfaceReady) {
+                                player?.let { p -> runCatching { p.start() } }
+                            }
+                        else -> {}
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(obs)
+                onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+            }
+            // 离开组合 / src 变化：释放解码器与播放器
+            DisposableEffect(player) {
+                onDispose { player?.let { p -> runCatching { p.release() } } }
+            }
+
+            // TextureView：视频尺寸未知时先铺满（首帧前 stretch 预备），已知后按
+            // cover 等比给出布局尺寸并居中，溢出被 clipToBounds 裁掉；
+            // isOpaque=false 让首帧前透明，不闪黑块
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .clipToBounds(),
+                contentAlignment = Alignment.Center
+            ) {
+                val vs = videoSize
+                val density = LocalDensity.current
+                val contentModifier = if (vs != null) {
+                    val k = maxOf(cw / vs.width, ch / vs.height)
+                    with(density) {
+                        Modifier.size((vs.width * k).toDp(), (vs.height * k).toDp())
+                    }
+                } else {
+                    Modifier.matchParentSize()
+                }
+                AndroidView(
+                    factory = { ctx ->
+                        TextureView(ctx).apply {
+                            isOpaque = false
+                            surfaceTextureListener =
+                                object : TextureView.SurfaceTextureListener {
+                                    override fun onSurfaceTextureAvailable(
+                                        st: android.graphics.SurfaceTexture, w: Int, h: Int
+                                    ) {
+                                        player?.let { p ->
+                                            runCatching { p.setSurface(Surface(st)) }
+                                        }
+                                        surfaceReady = true
+                                    }
+
+                                    override fun onSurfaceTextureSizeChanged(
+                                        st: android.graphics.SurfaceTexture, w: Int, h: Int
+                                    ) {
+                                    }
+
+                                    override fun onSurfaceTextureDestroyed(
+                                        st: android.graphics.SurfaceTexture
+                                    ): Boolean {
+                                        player?.let { p ->
+                                            runCatching { p.setSurface(null) }
+                                        }
+                                        surfaceReady = false
+                                        return true
+                                    }
+
+                                    override fun onSurfaceTextureUpdated(
+                                        st: android.graphics.SurfaceTexture
+                                    ) {
+                                    }
+                                }
+                        }
+                    },
+                    modifier = contentModifier
+                )
+            }
+        }
     }
 }

@@ -202,11 +202,11 @@ object LrcParser {
 
 /**
  * 播放器设置（v2.18 新增，设置中心持久化）：
- * - 歌词秀：背景（封面模糊/纯色/渐变/自定义图片）、3D 倾斜强度与上限、歌词墙视角、
- *   左右字体差、高亮颜色、KTV 渐进样式、当前行字号、行切换动画、高亮发光、翻译显示、
+ * - 歌词秀：背景（封面模糊/纯色/渐变/自定义图片/自定义视频）、3D 倾斜强度与上限、歌词墙视角、
+ *   左右字体差、高亮颜色、非高亮歌词颜色、KTV 渐进样式、当前行字号、行切换动画、高亮发光、翻译显示、
  *   自定义封面/光盘图片（v2.21）
  * - 桌面歌词（v2.21）：悬浮窗开关、两行/全屏双模式、字体颜色、背景不透明度、字号
- * - 主页：背景（默认/纯色/渐变/自定义图片）与图片压暗
+ * - 主页：背景（默认/纯色/渐变/自定义图片/自定义视频）与图片压暗
  * - 本地扫描：全库扫描 / 仅扫描指定目录（目录为绝对路径，依赖“所有文件访问”权限）
  * - 词源引擎：智能回退 / 指定优先词源（酷我、网易云、QQ 音乐、LRCLIB）
  */
@@ -216,6 +216,8 @@ data class MusicSettings(
     val lyricBgColor: Int = 0xFF191922.toInt(),
     val lyricBgGradient: Int = 0,
     val lyricBgImage: String? = null,
+    /** 歌词秀背景视频（v1.2 新增，绝对路径；BG_VIDEO 模式下静音循环铺底） */
+    val lyricBgVideo: String? = null,
     /** 封面模糊模式的模糊半径（dp），0 为不模糊（v2.20 可调；v2.21 默认接近清晰） */
     val coverBlur: Float = 3f,
     /** 封面模糊/自定义图片模式的背景压暗强度 0..0.95（v2.20 可调；v2.21 默认接近最亮） */
@@ -237,6 +239,8 @@ data class MusicSettings(
     val ktvMode: Boolean = false,
     /** 当前行字号（sp），非当前行按比例缩小 */
     val lyricFontSize: Int = 22,
+    /** 非高亮歌词颜色（v1.2 新增 ARGB）：默认非当前行/翻译行/KTV 未唱部分的字色 */
+    val lyricSubColor: Int = 0xFFD5D5DE.toInt(),
     // ---- 桌面歌词（v2.21 新增） ----
     /** 桌面歌词总开关（需「显示在应用上层/其他应用上层」权限） */
     val desktopLyricOn: Boolean = false,
@@ -273,7 +277,9 @@ data class MusicSettings(
     val homeBgColor: Int = 0xFFFCFCFD.toInt(),
     val homeBgGradient: Int = 0,
     val homeBgImage: String? = null,
-    /** 自定义图片时的压暗系数 0..0.8 */
+    /** 主页背景视频（v1.2 新增，绝对路径；BG_VIDEO 模式下静音循环铺底） */
+    val homeBgVideo: String? = null,
+    /** 自定义图片/视频时的压暗系数 0..0.8 */
     val homeImageDim: Float = 0.25f,
     // ---- 屏幕方向（独立版新增） ----
     /** 0 跟随系统 / 1 竖屏 / 2 横屏 / 3 自动旋转（重力感应） */
@@ -290,6 +296,7 @@ data class MusicSettings(
         const val BG_SOLID = 1      // 纯色
         const val BG_GRADIENT = 2   // 渐变预设
         const val BG_IMAGE = 3      // 自定义图片
+        const val BG_VIDEO = 4      // 自定义视频（v1.2 新增，静音循环铺底）
 
         // 歌词秀界面样式（v2.22）：点击封面/唱片互相切换，设置里持久化
         const val LYRIC_STYLE_WALL = 0    // 3D 歌词墙 + 封面嵌合 CD（默认）
@@ -308,7 +315,7 @@ data class MusicSettings(
             ORIENTATION_SENSOR to "自动旋转"
         )
 
-        // 主页背景模式
+        // 主页背景模式（HOME_BG_* 与 BG_* 同值：默认 0 / 纯色 1 / 渐变 2 / 图片 3 / 视频 4）
         const val HOME_BG_DEFAULT = 0
 
         // 本地扫描模式
@@ -437,6 +444,7 @@ class MusicStore(private val context: Context) {
             lyricBgColor = o.optInt("lyricBgColor", 0xFF191922.toInt()),
             lyricBgGradient = o.optInt("lyricBgGradient", 0),
             lyricBgImage = o.optString("lyricBgImage", "").takeIf { it.isNotEmpty() },
+            lyricBgVideo = o.optString("lyricBgVideo", "").takeIf { it.isNotEmpty() },
             coverBlur = o.optDouble("coverBlur", 3.0).toFloat().coerceIn(0f, 60f),
             lyricBgDim = o.optDouble("lyricBgDim", 0.10).toFloat().coerceIn(0f, 0.95f),
             tilt3d = o.optDouble("tilt3d", 14.0).toFloat().coerceIn(0f, 45f),
@@ -447,6 +455,7 @@ class MusicStore(private val context: Context) {
             highlightColor = o.optInt("highlightColor", 0xFFFFFFFF.toInt()),
             ktvMode = o.optBoolean("ktvMode", false),
             lyricFontSize = o.optInt("lyricFontSize", 22).coerceIn(12, 60),
+            lyricSubColor = o.optInt("lyricSubColor", 0xFFD5D5DE.toInt()),
             desktopLyricOn = o.optBoolean("desktopLyricOn", false),
             desktopLyricFullscreen = o.optBoolean("desktopLyricFullscreen", false),
             desktopLyricColor = o.optInt("desktopLyricColor", 0xFFFFFFFF.toInt()),
@@ -470,6 +479,7 @@ class MusicStore(private val context: Context) {
             homeBgColor = o.optInt("homeBgColor", 0xFFFCFCFD.toInt()),
             homeBgGradient = o.optInt("homeBgGradient", 0),
             homeBgImage = o.optString("homeBgImage", "").takeIf { it.isNotEmpty() },
+            homeBgVideo = o.optString("homeBgVideo", "").takeIf { it.isNotEmpty() },
             homeImageDim = o.optDouble("homeImageDim", 0.25).toFloat().coerceIn(0f, 0.95f),
             orientation = o.optInt("orientation", MusicSettings.ORIENTATION_AUTO).coerceIn(0, 3),
             scanMode = o.optInt("scanMode", MusicSettings.SCAN_ALL),
@@ -488,6 +498,7 @@ class MusicStore(private val context: Context) {
                     .put("lyricBgColor", s.lyricBgColor)
                     .put("lyricBgGradient", s.lyricBgGradient)
                     .put("lyricBgImage", s.lyricBgImage ?: "")
+                    .put("lyricBgVideo", s.lyricBgVideo ?: "")
                     .put("coverBlur", s.coverBlur.toDouble())
                     .put("lyricBgDim", s.lyricBgDim.toDouble())
                     .put("tilt3d", s.tilt3d.toDouble())
@@ -498,6 +509,7 @@ class MusicStore(private val context: Context) {
                     .put("highlightColor", s.highlightColor)
                     .put("ktvMode", s.ktvMode)
                     .put("lyricFontSize", s.lyricFontSize)
+                    .put("lyricSubColor", s.lyricSubColor)
                     .put("desktopLyricOn", s.desktopLyricOn)
                     .put("desktopLyricFullscreen", s.desktopLyricFullscreen)
                     .put("desktopLyricColor", s.desktopLyricColor)
@@ -517,6 +529,7 @@ class MusicStore(private val context: Context) {
                     .put("homeBgColor", s.homeBgColor)
                     .put("homeBgGradient", s.homeBgGradient)
                     .put("homeBgImage", s.homeBgImage ?: "")
+                    .put("homeBgVideo", s.homeBgVideo ?: "")
                     .put("homeImageDim", s.homeImageDim.toDouble())
                     .put("orientation", s.orientation)
                     .put("scanMode", s.scanMode)

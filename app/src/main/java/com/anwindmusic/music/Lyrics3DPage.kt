@@ -129,6 +129,13 @@ import kotlin.math.roundToInt
  *   graphicsLayer 视觉盒重合，内部子元素 requiredSize 锁设计尺寸），消除缩放差
  *   带来的上下空隙；左右两列改为「主体 + 控制条」整组垂直居中（Spacer 6dp）；
  * - 黑胶唱片直径高度预留控制条空间（列高 - 72dp 参与取小），横屏矮列不溢出。
+ *
+ * v1.2 三项新增：
+ * - ① 自定义视频背景（BG_VIDEO）：主页与歌词页均可选本地视频静音循环铺底；
+ * - ② 竖屏歌词优化：竖屏由「左右分栏」改为「上下布局」—— 上部封面/唱片 + 紧凑控制条
+ *   （自适应高度与缩放），下部全宽 3D 歌词墙，窄屏下歌词行长/可读性大幅提升；
+ *   横屏保持左右分栏（封面列 38% / 歌词墙 62%）不变；
+ * - ③ 非高亮歌词颜色自定义（lyricSubColor）：非当前行、翻译行与 KTV 未唱部分跟随该色。
  */
 @Composable
 fun Lyrics3DPage(
@@ -198,6 +205,10 @@ fun Lyrics3DPage(
             }
             MusicSettings.BG_IMAGE -> {
                 BgImage(settings.lyricBgImage, Modifier.matchParentSize())
+            }
+            MusicSettings.BG_VIDEO -> {
+                // v1.2 自定义视频背景：静音循环铺底，随歌词页生命周期自动暂停/续播
+                BgVideo(settings.lyricBgVideo, Modifier.matchParentSize())
             }
             else -> {
                 // 封面模糊铺底（默认，对应图1）—— v2.20 模糊半径可调（0 = 清晰不模糊）
@@ -313,89 +324,142 @@ fun Lyrics3DPage(
             }
 
             // ---- 主体：v2.22 歌词秀双界面 —— 3D 歌词墙 / 黑胶唱片机 ----
-            // v2.25：进度条与上一首/播放/下一首等控制条整体缩小，从页面底部移到
-            // 左列封面/光盘正下方（两个界面同构），页面下部完全让给歌词墙
-            if (vinylStyle) {
-                // 黑胶唱片机（对照参考图2）：左黑胶 + 唱针 + 左列底部紧凑控制条，点击唱片切回 3D 墙
-                VinylBody(
-                    coverUrl = coverSrc,
-                    customCover = settings.coverImage,
-                    customDisc = settings.discImage,
-                    isPlaying = isPlaying,
-                    lyric = lyric,
-                    lyricLoading = lyricLoading,
-                    positionMs = positionMs,
-                    durationMs = durationMs,
-                    isPreparing = isPreparing,
-                    playMode = playMode,
-                    settingsProvider = settingsProvider,
-                    positionProvider = positionProvider,
-                    onSeek = onSeek,
-                    onToggle = onToggle,
-                    onNext = onNext,
-                    onPrev = onPrev,
-                    onCycleMode = onCycleMode,
-                    onToggleStyle = toggleStyle,
-                    modifier = Modifier.weight(1f).fillMaxWidth()
-                )
-            } else {
-                // 3D 歌词墙：左封面+CD / 右 3D 歌词墙（横竖屏同构；v2.24.1 起
-                // CoverWithDisc 用 requiredSize 锁定设计尺寸，竖屏窄列不再被压缩变形）
-                Row(
-                    Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // 左：封面 + 旋转CD（嵌合）+ 其正下方的紧凑控制条（占 38%）
-                    // v2.25.1：整组（封面/光盘 + 控制条）垂直居中，控制条紧贴封面/光盘
-                    // 视觉底缘（CoverWithDisc 布局盒已同步缩放，竖屏不再有额外空隙）
-                    Column(
-                        Modifier
-                            .fillMaxHeight()
-                            .weight(0.38f),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Box(
-                            Modifier.fillMaxWidth(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CoverWithDisc(
-                                coverUrl = coverSrc,
-                                customCover = settings.coverImage,
-                                customDisc = settings.discImage,
-                                isPlaying = isPlaying,
-                                onSwitchStyle = toggleStyle
-                            )
-                        }
-                        Spacer(Modifier.height(6.dp))
-                        // v2.25：控制条缩小后放封面/光盘正下方
-                        CompactControls(
+            // v2.25：控制条缩小后置于主体正下方（两界面同构），页面下部让给歌词墙；
+            // v1.2 竖屏优化：竖屏改为「上下布局」—— 上部封面/唱片 + 紧凑控制条，
+            // 下部全宽 3D 歌词墙（窄屏歌词行长/可读性大幅提升）；
+            // 横屏保持左右分栏（主体列 38% / 歌词墙 62%）
+            BoxWithConstraints(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                val portrait = maxHeight > maxWidth
+                if (vinylStyle) {
+                    if (portrait) {
+                        // 竖屏黑胶唱片机：上部唱片 + 控制条，下部全宽歌词墙
+                        VinylBodyPortrait(
+                            coverUrl = coverSrc,
+                            customCover = settings.coverImage,
+                            customDisc = settings.discImage,
+                            isPlaying = isPlaying,
+                            lyric = lyric,
+                            lyricLoading = lyricLoading,
                             positionMs = positionMs,
                             durationMs = durationMs,
-                            isPlaying = isPlaying,
                             isPreparing = isPreparing,
                             playMode = playMode,
+                            settingsProvider = settingsProvider,
+                            positionProvider = positionProvider,
                             onSeek = onSeek,
                             onToggle = onToggle,
                             onNext = onNext,
                             onPrev = onPrev,
-                            onCycleMode = onCycleMode
+                            onCycleMode = onCycleMode,
+                            onToggleStyle = toggleStyle
+                        )
+                    } else {
+                        // 黑胶唱片机（对照参考图2）：左黑胶 + 唱针 + 左列底部紧凑控制条，点击唱片切回 3D 墙
+                        VinylBody(
+                            coverUrl = coverSrc,
+                            customCover = settings.coverImage,
+                            customDisc = settings.discImage,
+                            isPlaying = isPlaying,
+                            lyric = lyric,
+                            lyricLoading = lyricLoading,
+                            positionMs = positionMs,
+                            durationMs = durationMs,
+                            isPreparing = isPreparing,
+                            playMode = playMode,
+                            settingsProvider = settingsProvider,
+                            positionProvider = positionProvider,
+                            onSeek = onSeek,
+                            onToggle = onToggle,
+                            onNext = onNext,
+                            onPrev = onPrev,
+                            onCycleMode = onCycleMode,
+                            onToggleStyle = toggleStyle,
+                            modifier = Modifier.fillMaxSize()
                         )
                     }
-
-                    // 右：3D 歌词墙（占 62%）
-                    LyricsWallArea(
+                } else if (portrait) {
+                    // 竖屏 3D 歌词墙：上部封面+光盘+控制条，下部全宽歌词墙
+                    WallBodyPortrait(
+                        coverUrl = coverSrc,
+                        customCover = settings.coverImage,
+                        customDisc = settings.discImage,
+                        isPlaying = isPlaying,
                         lyric = lyric,
                         lyricLoading = lyricLoading,
                         positionMs = positionMs,
+                        durationMs = durationMs,
+                        isPreparing = isPreparing,
+                        playMode = playMode,
                         settingsProvider = settingsProvider,
                         positionProvider = positionProvider,
                         onSeek = onSeek,
-                        modifier = Modifier.weight(0.62f).fillMaxHeight()
+                        onToggle = onToggle,
+                        onNext = onNext,
+                        onPrev = onPrev,
+                        onCycleMode = onCycleMode,
+                        onToggleStyle = toggleStyle
                     )
+                } else {
+                    // 3D 歌词墙（横屏）：左封面+CD / 右 3D 歌词墙
+                    Row(
+                        Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 24.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 左：封面 + 旋转CD（嵌合）+ 其正下方的紧凑控制条（占 38%）
+                        // v2.25.1：整组（封面/光盘 + 控制条）垂直居中，控制条紧贴封面/光盘
+                        // 视觉底缘（CoverWithDisc 布局盒已同步缩放，竖屏不再有额外空隙）
+                        Column(
+                            Modifier
+                                .fillMaxHeight()
+                                .weight(0.38f),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Box(
+                                Modifier.fillMaxWidth(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CoverWithDisc(
+                                    coverUrl = coverSrc,
+                                    customCover = settings.coverImage,
+                                    customDisc = settings.discImage,
+                                    isPlaying = isPlaying,
+                                    onSwitchStyle = toggleStyle
+                                )
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            // v2.25：控制条缩小后放封面/光盘正下方
+                            CompactControls(
+                                positionMs = positionMs,
+                                durationMs = durationMs,
+                                isPlaying = isPlaying,
+                                isPreparing = isPreparing,
+                                playMode = playMode,
+                                onSeek = onSeek,
+                                onToggle = onToggle,
+                                onNext = onNext,
+                                onPrev = onPrev,
+                                onCycleMode = onCycleMode
+                            )
+                        }
+
+                        // 右：3D 歌词墙（占 62%）
+                        LyricsWallArea(
+                            lyric = lyric,
+                            lyricLoading = lyricLoading,
+                            positionMs = positionMs,
+                            settingsProvider = settingsProvider,
+                            positionProvider = positionProvider,
+                            onSeek = onSeek,
+                            modifier = Modifier.weight(0.62f).fillMaxHeight()
+                        )
+                    }
                 }
             }
         }
@@ -458,7 +522,9 @@ private fun CoverWithDisc(
     customDisc: String?,
     isPlaying: Boolean,
     /** v2.22：点击封面/光盘切到黑胶唱片机界面 */
-    onSwitchStyle: () -> Unit
+    onSwitchStyle: () -> Unit,
+    /** v1.2 竖屏：缩放上限（0..1），给上下布局中歌词墙让出视觉空间 */
+    maxScale: Float = 1f
 ) {
     val cdAngle = rememberSpinAngle(isPlaying)
     val discBmp = rememberDiscArtwork(coverUrl, customDisc ?: customCover)
@@ -468,7 +534,8 @@ private fun CoverWithDisc(
     // 整体（封面 190 + 光盘探出 89 ≈ 279dp）超宽时按容器宽等比缩小防溢出
     BoxWithConstraints(contentAlignment = Alignment.Center) {
         // v2.24.1：下限 0.60 → 0.34 —— 竖屏窄列按真实容器宽等比缩小，不再硬撑溢出
-        val fit = (maxWidth.value / 288f).coerceIn(0.34f, 1f)
+        // v1.2：乘 maxScale 支持竖屏上部高度受限时再收缩
+        val fit = (maxWidth.value / 288f).coerceIn(0.34f, 1f) * maxScale.coerceIn(0.34f, 1f)
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
@@ -736,6 +803,166 @@ private fun VinylBody(
             positionProvider = positionProvider,
             onSeek = onSeek,
             modifier = Modifier.weight(0.62f).fillMaxHeight()
+        )
+    }
+}
+
+// ==================== v1.2 竖屏上下布局 ====================
+
+/**
+ * v1.2 竖屏歌词优化 —— 3D 歌词墙竖屏布局（上下结构）：
+ * - 上部（约 42% 高，自适应）：封面+光盘嵌合体（按剩余高度自动收缩）+ 紧凑控制条，
+ *   整组垂直居中；下部：全宽 3D 歌词墙 —— 相比旧竖屏左右分栏（歌词墙仅 62% 宽），
+ *   行长与可读性大幅提升，符合手机竖屏看词习惯；
+ * - 歌词墙与横屏共用同一套 [LyricsWall]（透视/纵深/KTV 渐进/点击跳转全部一致）；
+ * - 上部高度不足（小屏/大字号）时嵌合体按 (可用高 - 控制条预留) 自动等比缩小，不溢出。
+ */
+@Composable
+private fun WallBodyPortrait(
+    coverUrl: String?,
+    customCover: String?,
+    customDisc: String?,
+    isPlaying: Boolean,
+    lyric: LyricsDoc?,
+    lyricLoading: Boolean,
+    positionMs: Long,
+    durationMs: Long,
+    isPreparing: Boolean,
+    playMode: Int,
+    settingsProvider: () -> MusicSettings,
+    positionProvider: () -> Long,
+    onSeek: (Long) -> Unit,
+    onToggle: () -> Unit,
+    onNext: () -> Unit,
+    onPrev: () -> Unit,
+    onCycleMode: () -> Unit,
+    onToggleStyle: () -> Unit
+) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(horizontal = 20.dp)
+    ) {
+        // 上部：封面 + 光盘（点击切黑胶）+ 控制条，高度自适应并垂直居中
+        BoxWithConstraints(
+            Modifier
+                .fillMaxWidth()
+                .weight(0.42f),
+            contentAlignment = Alignment.Center
+        ) {
+            // 控制条 + 间距预留约 92dp；嵌合体设计高 190dp，按剩余高度收缩
+            val maxScale = ((maxHeight.value - 92f) / 190f).coerceIn(0.34f, 1f)
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CoverWithDisc(
+                    coverUrl = coverUrl,
+                    customCover = customCover,
+                    customDisc = customDisc,
+                    isPlaying = isPlaying,
+                    onSwitchStyle = onToggleStyle,
+                    maxScale = maxScale
+                )
+                Spacer(Modifier.height(6.dp))
+                CompactControls(
+                    positionMs = positionMs,
+                    durationMs = durationMs,
+                    isPlaying = isPlaying,
+                    isPreparing = isPreparing,
+                    playMode = playMode,
+                    onSeek = onSeek,
+                    onToggle = onToggle,
+                    onNext = onNext,
+                    onPrev = onPrev,
+                    onCycleMode = onCycleMode
+                )
+            }
+        }
+        // 下部：全宽 3D 歌词墙（约 58% 高）
+        LyricsWallArea(
+            lyric = lyric,
+            lyricLoading = lyricLoading,
+            positionMs = positionMs,
+            settingsProvider = settingsProvider,
+            positionProvider = positionProvider,
+            onSeek = onSeek,
+            modifier = Modifier
+                .weight(0.58f)
+                .fillMaxWidth()
+        )
+    }
+}
+
+/**
+ * v1.2 竖屏歌词优化 —— 黑胶唱片机竖屏布局（上下结构）：
+ * - 上部（约 42% 高）：黑胶唱片（尺寸随剩余高度自适应）+ 紧凑控制条；
+ * - 下部：全宽 3D 歌词墙（与 3D 墙界面/横屏黑胶完全同一套）。
+ */
+@Composable
+private fun VinylBodyPortrait(
+    coverUrl: String?,
+    customCover: String?,
+    customDisc: String?,
+    isPlaying: Boolean,
+    lyric: LyricsDoc?,
+    lyricLoading: Boolean,
+    positionMs: Long,
+    durationMs: Long,
+    isPreparing: Boolean,
+    playMode: Int,
+    settingsProvider: () -> MusicSettings,
+    positionProvider: () -> Long,
+    onSeek: (Long) -> Unit,
+    onToggle: () -> Unit,
+    onNext: () -> Unit,
+    onPrev: () -> Unit,
+    onCycleMode: () -> Unit,
+    onToggleStyle: () -> Unit
+) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(horizontal = 20.dp)
+    ) {
+        // 上部：黑胶唱片 + 控制条
+        BoxWithConstraints(
+            Modifier
+                .fillMaxWidth()
+                .weight(0.42f),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                VinylDiscUnit(
+                    coverUrl = coverUrl,
+                    customCover = customCover,
+                    customDisc = customDisc,
+                    isPlaying = isPlaying,
+                    onToggleStyle = onToggleStyle
+                )
+                Spacer(Modifier.height(6.dp))
+                CompactControls(
+                    positionMs = positionMs,
+                    durationMs = durationMs,
+                    isPlaying = isPlaying,
+                    isPreparing = isPreparing,
+                    playMode = playMode,
+                    onSeek = onSeek,
+                    onToggle = onToggle,
+                    onNext = onNext,
+                    onPrev = onPrev,
+                    onCycleMode = onCycleMode
+                )
+            }
+        }
+        // 下部：全宽 3D 歌词墙
+        LyricsWallArea(
+            lyric = lyric,
+            lyricLoading = lyricLoading,
+            positionMs = positionMs,
+            settingsProvider = settingsProvider,
+            positionProvider = positionProvider,
+            onSeek = onSeek,
+            modifier = Modifier
+                .weight(0.58f)
+                .fillMaxWidth()
         )
     }
 }
@@ -1135,12 +1362,13 @@ private fun LyricLineItem(
             }
     ) {
         if (active && settings.ktvMode) {
-            // v2.21 KTV 渐进样式：未唱灰字打底，已唱高亮色按播放进度从左向右扫开
+            // v2.21 KTV 渐进样式：未唱字用「非高亮颜色」半透明打底，已唱高亮色按播放进度从左向右扫开
             KtvSweepText(
                 text = line.text.ifBlank { "···" },
                 fontSizeSp = settings.lyricFontSize,
                 diff = settings.lineYaw3d / 100f,
                 fillColor = Color(settings.highlightColor),
+                baseColor = Color(settings.lyricSubColor),
                 glow = settings.lyricGlow,
                 lineStartMs = line.timeMs,
                 lineEndMs = lineEndMs,
@@ -1156,8 +1384,8 @@ private fun LyricLineItem(
                 fontSize = if (active) settings.lyricFontSize.sp
                 else (settings.lyricFontSize * 0.77f).roundToInt().sp,
                 fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
-                // v2.21：当前行颜色可自定义（默认白）
-                color = if (active) Color(settings.highlightColor) else Color(0xFFD5D5DE),
+                // v2.21：当前行高亮颜色可自定义；v1.2：非当前行颜色也可自定义
+                color = if (active) Color(settings.highlightColor) else Color(settings.lyricSubColor),
                 style = if (active && settings.lyricGlow) {
                     TextStyle(
                         shadow = Shadow(
@@ -1176,7 +1404,8 @@ private fun LyricLineItem(
             Text(
                 text = line.translation,
                 fontSize = if (active) 13.sp else 11.sp,
-                color = Color.White.copy(alpha = if (active) 0.6f else 0.35f),
+                // v1.2：翻译行随「非高亮歌词颜色」同色半透明（当前行更亮、非当前行更淡）
+                color = Color(settings.lyricSubColor).copy(alpha = if (active) 0.72f else 0.5f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -1185,10 +1414,11 @@ private fun LyricLineItem(
 }
 
 /**
- * KTV 渐进填充文本（v2.21）：底层未唱灰字 + 上层高亮色已唱文字，
+ * KTV 渐进填充文本（v2.21）：底层未唱字 + 上层高亮色已唱文字，
  * clipRect 按行内播放进度从左向右扫开。
  * 50ms 节拍直读 positionProvider（MusicEngine.rawPositionMs()，MediaPlayer 原生位置，
  * 非 300ms 状态 tick），扫色平滑；状态读发生在绘制阶段，不触发重组。
+ * v1.2：未唱打底色由固定白改为「非高亮歌词颜色」半透明（lyricSubColor）。
  */
 @Composable
 private fun KtvSweepText(
@@ -1196,6 +1426,8 @@ private fun KtvSweepText(
     fontSizeSp: Int,
     diff: Float,
     fillColor: Color,
+    /** 未唱部分打底色（非高亮歌词颜色），以固定透明度叠加 */
+    baseColor: Color,
     glow: Boolean,
     lineStartMs: Long,
     lineEndMs: Long,
@@ -1221,7 +1453,7 @@ private fun KtvSweepText(
             text = sized,
             fontSize = fontSizeSp.sp,
             fontWeight = FontWeight.Bold,
-            color = Color.White.copy(alpha = 0.34f),
+            color = baseColor.copy(alpha = 0.40f),
             style = glowStyle,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis

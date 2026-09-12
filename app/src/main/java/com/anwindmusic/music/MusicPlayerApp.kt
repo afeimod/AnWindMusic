@@ -134,6 +134,8 @@ class DownloadItem(val song: SongInfo) {
 fun MusicContent(
     /** 系统图片选择器（kind：homeImage / lyricImage / coverImage / discImage） */
     onPickImage: (String) -> Unit,
+    /** v1.2 系统视频选择器（kind：homeVideo / lyricVideo，主页/歌词页背景视频） */
+    onPickVideo: (String) -> Unit,
     /** 系统文件夹选择器（本地扫描目录） */
     onPickFolder: () -> Unit,
     /** 是否处于沉浸式全屏（歌词页隐藏系统状态栏/导航栏） */
@@ -211,7 +213,7 @@ fun MusicContent(
 
     fun openPicker(kind: String, mode: String) {
         pendingPick = kind
-        if (mode == "image") onPickImage(kind) else onPickFolder()
+        if (mode == "image") onPickImage(kind) else if (mode == "video") onPickVideo(kind) else onPickFolder()
     }
 
     // ===== 动态清晰度（v1.2）：按自定义背景等效亮度切换全局明暗配色 =====
@@ -222,6 +224,7 @@ fun MusicContent(
     LaunchedEffect(
         musicSettings.homeBgMode,
         musicSettings.homeBgImage,
+        musicSettings.homeBgVideo,
         musicSettings.homeBgColor,
         musicSettings.homeBgGradient,
         musicSettings.homeImageDim
@@ -233,6 +236,9 @@ fun MusicContent(
                 else loadBackgroundBitmap(context, path, 64)?.averageLuminance()
                     ?.let { (it * (1f - musicSettings.homeImageDim)).coerceIn(0f, 1f) }
             }
+            // v1.2 视频背景：逐帧亮度无法廉价获取，按多数背景视频偏暗取中间偏暗基准，
+            // 走暗背景方案（白字 + 黑玻璃 + 黑投影），任意画面下文字均可读
+            MusicSettings.BG_VIDEO -> 0.30f * (1f - musicSettings.homeImageDim)
             MusicSettings.BG_SOLID -> Color(musicSettings.homeBgColor).luminance()
             MusicSettings.BG_GRADIENT -> {
                 val pair = HomeBgGradients.getOrElse(musicSettings.homeBgGradient) { HomeBgGradients[0] }
@@ -282,6 +288,13 @@ fun MusicContent(
             when (pendingPick) {
                 "homeImage" -> updateSettings(
                     musicSettings.copy(homeBgImage = path, homeBgMode = MusicSettings.BG_IMAGE)
+                )
+                // v1.2：背景视频选择回传（主页/歌词页），切到对应视频模式
+                "homeVideo" -> updateSettings(
+                    musicSettings.copy(homeBgVideo = path, homeBgMode = MusicSettings.BG_VIDEO)
+                )
+                "lyricVideo" -> updateSettings(
+                    musicSettings.copy(lyricBgVideo = path, lyricBgMode = MusicSettings.BG_VIDEO)
                 )
                 "lyricImage" -> updateSettings(
                     musicSettings.copy(lyricBgImage = path, lyricBgMode = MusicSettings.BG_IMAGE)
@@ -432,7 +445,7 @@ fun MusicContent(
             val pair = HomeBgGradients.getOrElse(musicSettings.homeBgGradient) { HomeBgGradients[0] }
             Modifier.background(Brush.verticalGradient(pair))
         }
-        MusicSettings.BG_IMAGE -> Modifier.background(Color.Transparent)
+        MusicSettings.BG_IMAGE, MusicSettings.BG_VIDEO -> Modifier.background(Color.Transparent)
         else -> Modifier.background(Mc.bg)
     }
     // 向全内容区提供自定义背景激活标记与动态清晰度配色方案
@@ -444,9 +457,22 @@ fun MusicContent(
         // imePadding：edge-to-edge 下键盘不挤压窗口（API 30+），由 insets 把整体抬到键盘上方；
         // API 24-29 的 adjustResize 窗口缩放路径下 ime insets 为 0，此修饰符自动无操作
         Box(Modifier.fillMaxSize().imePadding()) {
-            // 自定义图片背景 + 压暗层（仅图片模式）
+            // 自定义图片/视频背景 + 压暗层（仅对应模式）
+            // v1.2 视频：active 随 showLyrics 暂停/续播 —— 歌词页覆盖时保留最后一帧不空耗，
+            // 退出歌词页淡入淡出过渡期间视频已在原位，无闪白
             if (musicSettings.homeBgMode == MusicSettings.BG_IMAGE) {
                 BgImage(musicSettings.homeBgImage, Modifier.matchParentSize())
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .background(Color.Black.copy(alpha = musicSettings.homeImageDim))
+                )
+            } else if (musicSettings.homeBgMode == MusicSettings.BG_VIDEO) {
+                BgVideo(
+                    musicSettings.homeBgVideo,
+                    Modifier.matchParentSize(),
+                    active = !showLyrics
+                )
                 Box(
                     Modifier
                         .matchParentSize()
@@ -590,6 +616,8 @@ fun MusicContent(
                                 onChange = { updateSettings(it) },
                                 onPickLyricImage = { openPicker("lyricImage", "image") },
                                 onPickHomeImage = { openPicker("homeImage", "image") },
+                                onPickHomeVideo = { openPicker("homeVideo", "video") },
+                                onPickLyricVideo = { openPicker("lyricVideo", "video") },
                                 onPickCoverImage = { openPicker("coverImage", "image") },
                                 onPickDiscImage = { openPicker("discImage", "image") },
                                 onPickFolder = { openPicker("folder", "dir") },

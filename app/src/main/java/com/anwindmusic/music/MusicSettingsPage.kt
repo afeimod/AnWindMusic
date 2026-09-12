@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
@@ -70,6 +71,21 @@ val LyricAccentColors = listOf(
 )
 
 /**
+ * v1.2 非高亮歌词颜色预设（首项为默认浅灰紫 #D5D5DE，附白/暗灰与常用彩色）
+ */
+val LyricSubColors = listOf(
+    Color(0xFFD5D5DE),
+    Color(0xFFFFFFFF),
+    Color(0xFF9E9EAE),
+    Color(0xFF6C6C7A),
+    Color(0xFFEC4141),
+    Color(0xFFFFC53D),
+    Color(0xFF4DD0E1),
+    Color(0xFF66BB6A),
+    Color(0xFFBA68C8)
+)
+
+/**
  * 播放器设置中心（v2.18 新增，v2.21 扩充）：
  * - 外观：主页背景（默认/纯色/渐变/自定义图片 + 压暗）—— 全局生效
  *   （侧栏/底栏半透明融合），图片/文件夹选择均拉起 AnWind 桌面文件资源管理器
@@ -89,6 +105,10 @@ fun SettingsPage(
     onChange: (MusicSettings) -> Unit,
     onPickLyricImage: () -> Unit,
     onPickHomeImage: () -> Unit,
+    /** v1.2 主页背景视频选择（系统文件选择器 video/*） */
+    onPickHomeVideo: () -> Unit = {},
+    /** v1.2 歌词页背景视频选择 */
+    onPickLyricVideo: () -> Unit = {},
     onPickCoverImage: () -> Unit,
     onPickDiscImage: () -> Unit,
     onPickFolder: () -> Unit,
@@ -112,7 +132,8 @@ fun SettingsPage(
                     MusicSettings.HOME_BG_DEFAULT to "默认",
                     MusicSettings.BG_SOLID to "纯色",
                     MusicSettings.BG_GRADIENT to "渐变",
-                    MusicSettings.BG_IMAGE to "图片"
+                    MusicSettings.BG_IMAGE to "图片",
+                    MusicSettings.BG_VIDEO to "视频"
                 ),
                 selected = settings.homeBgMode,
                 onSelect = { onChange(settings.copy(homeBgMode = it)) }
@@ -144,8 +165,25 @@ fun SettingsPage(
                         onChange = { onChange(settings.copy(homeImageDim = it)) }
                     )
                 }
+                MusicSettings.BG_VIDEO -> {
+                    // v1.2 主页背景视频：静音循环铺底，文字/控件按暗色方案自适应
+                    VideoPickRow(
+                        label = "主页背景视频",
+                        picked = settings.homeBgVideo != null,
+                        onPick = onPickHomeVideo,
+                        onClear = { onChange(settings.copy(homeBgVideo = null)) }
+                    )
+                    SettingSlider(
+                        title = "视频压暗",
+                        display = "${(settings.homeImageDim * 100).toInt()}%",
+                        value = settings.homeImageDim,
+                        range = 0f..0.95f,
+                        steps = 18,
+                        onChange = { onChange(settings.copy(homeImageDim = it)) }
+                    )
+                }
             }
-            Caption("背景全局生效：顶栏/播放条/底栏与设置卡片/选项/搜索框自动半透明融入；并按背景明暗动态切换深浅文字与光晕，任意壁纸文字都清晰可读（图片过暗时可调「图片压暗」）")
+            Caption("背景全局生效：顶栏/播放条/底栏与设置卡片/选项/搜索框自动半透明融入；并按背景明暗动态切换深浅文字与光晕，任意壁纸文字都清晰可读（图片过暗时可调「图片压暗」）；视频模式静音循环播放，退后台/被歌词页覆盖时自动暂停省电")
         }
 
         SettingsSection("歌词秀背景") {
@@ -154,7 +192,8 @@ fun SettingsPage(
                     MusicSettings.BG_COVER to "封面模糊",
                     MusicSettings.BG_SOLID to "纯色",
                     MusicSettings.BG_GRADIENT to "渐变",
-                    MusicSettings.BG_IMAGE to "图片"
+                    MusicSettings.BG_IMAGE to "图片",
+                    MusicSettings.BG_VIDEO to "视频"
                 ),
                 selected = settings.lyricBgMode,
                 onSelect = { onChange(settings.copy(lyricBgMode = it)) }
@@ -217,8 +256,25 @@ fun SettingsPage(
                         onChange = { onChange(settings.copy(lyricBgDim = it)) }
                     )
                 }
+                MusicSettings.BG_VIDEO -> {
+                    // v1.2 歌词秀背景视频：静音循环铺底，压暗强度与图片模式共用 lyricBgDim
+                    VideoPickRow(
+                        label = "歌词秀背景视频",
+                        picked = settings.lyricBgVideo != null,
+                        onPick = onPickLyricVideo,
+                        onClear = { onChange(settings.copy(lyricBgVideo = null)) }
+                    )
+                    SettingSlider(
+                        title = "背景压暗",
+                        display = "${(settings.lyricBgDim * 100).toInt()}%",
+                        value = settings.lyricBgDim,
+                        range = 0f..0.95f,
+                        steps = 18,
+                        onChange = { onChange(settings.copy(lyricBgDim = it)) }
+                    )
+                }
             }
-            Caption("三类图片均可独立自定义：背景铺满歌词页、封面替换左侧卡片、光盘替换旋转碟片盘面；光盘留空时与封面同图，都留空则用歌曲专辑图")
+            Caption("背景/封面/光盘三类图片均可独立自定义；视频模式选本地视频静音循环铺底，配合「背景压暗」保证歌词可读；编码不支持时自动透明兜底，不影响歌词显示")
         }
 
         SettingsSection("3D 歌词") {
@@ -266,6 +322,19 @@ fun SettingsPage(
                 selected = settings.highlightColor,
                 onSelect = { onChange(settings.copy(highlightColor = it)) }
             )
+            // v1.2：非高亮歌词颜色自定义（非当前行/翻译行/KTV 未唱部分）
+            Text(
+                text = "非高亮歌词颜色",
+                fontSize = 12.sp,
+                color = LocalAdaptiveScheme.current.textSecondary,
+                style = TextStyle(shadow = LocalAdaptiveScheme.current.shadow),
+                modifier = Modifier.padding(top = 10.dp)
+            )
+            ColorSwatchRow(
+                colors = LyricSubColors,
+                selected = settings.lyricSubColor,
+                onSelect = { onChange(settings.copy(lyricSubColor = it)) }
+            )
             SettingSwitch(
                 title = "KTV 渐进显示",
                 desc = "当前行按播放进度从左向右逐字填色（卡拉OK样式，未唱部分半透明灰）",
@@ -298,7 +367,7 @@ fun SettingsPage(
                 checked = settings.showTranslation,
                 onChange = { onChange(settings.copy(showTranslation = it)) }
             )
-            Caption("真透视歌词墙：整面墙俯仰/偏航 + 纵深收敛 + 行内逐字左右字体差（行首小行尾大）；俯仰 0° + 视角 0° + 纵深 0 + 字体差 0 即为平面滚动歌词")
+            Caption("真透视歌词墙：整面墙俯仰/偏航 + 纵深收敛 + 行内逐字左右字体差（行首小行尾大）；俯仰 0° + 视角 0° + 纵深 0 + 字体差 0 即为平面滚动歌词；非高亮颜色同步作用于非当前行、翻译行与 KTV 未唱部分；竖屏时自动切换为上下布局（全宽歌词墙）")
         }
 
         SettingsSection("桌面歌词") {
@@ -490,7 +559,7 @@ fun SettingsPage(
 
         SettingsSection("关于") {
             Caption("音源：酷我（搜索 / 播放 / 下载） · 词源：酷我 / 网易云 / QQ 音乐 / LRCLIB")
-            Caption("AnWind云音乐（独立版）v1.1.0 · 源自 AnWind 云音乐 · 3D 歌词秀 · 桌面歌词")
+            Caption("AnWind云音乐（独立版）v1.2.0 · 源自 AnWind 云音乐 · 3D 歌词秀 · 桌面歌词 · 视频背景")
         }
         Spacer(Modifier.height(20.dp))
     }
@@ -639,6 +708,52 @@ private fun ImagePickRow(
     ) {
         Icon(
             Icons.Filled.Image,
+            contentDescription = null,
+            tint = Mc.red,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = if (picked) "已选择$label（点击可更换）" else "点击选择$label",
+            fontSize = 13.sp,
+            color = sch.textPrimary,
+            style = TextStyle(shadow = sch.shadow),
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(6.dp))
+                .clickable(onClick = onPick)
+                .padding(vertical = 6.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        if (picked) {
+            IconButton(onClick = onClear, modifier = Modifier.size(24.dp)) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "清除",
+                    tint = sch.textTertiary,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+        }
+    }
+}
+
+/** 视频选择行（v1.2 新增：主页/歌词秀背景视频，交互与图片选择行一致） */
+@Composable
+private fun VideoPickRow(
+    label: String,
+    picked: Boolean,
+    onPick: () -> Unit,
+    onClear: () -> Unit
+) {
+    val sch = LocalAdaptiveScheme.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(top = 10.dp)
+    ) {
+        Icon(
+            Icons.Filled.Videocam,
             contentDescription = null,
             tint = Mc.red,
             modifier = Modifier.size(18.dp)
