@@ -122,6 +122,13 @@ import kotlin.math.roundToInt
  *   移到左列封面/光盘（黑胶界面为唱片）正下方，两界面同构；
  * - 页面下部完全让给 3D 歌词墙，沉浸感更强；
  * - 播放器主界面的音量条/进度条同步修复为标准安卓 Material 尺寸（thumb 不再被压扁）。
+ *
+ * v2.25.1 贴合与顺序修正（反馈修复）：
+ * - 控制条内部恢复原序：按钮行（模式/上一首/播放/下一首）在上、进度条在下；
+ * - 竖屏控制条紧贴光盘：CoverWithDisc 布局盒由固定 190dp 改为 190*fit（与
+ *   graphicsLayer 视觉盒重合，内部子元素 requiredSize 锁设计尺寸），消除缩放差
+ *   带来的上下空隙；左右两列改为「主体 + 控制条」整组垂直居中（Spacer 6dp）；
+ * - 黑胶唱片直径高度预留控制条空间（列高 - 72dp 参与取小），横屏矮列不溢出。
  */
 @Composable
 fun Lyrics3DPage(
@@ -342,15 +349,17 @@ fun Lyrics3DPage(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // 左：封面 + 旋转CD（嵌合）+ 其正下方的紧凑控制条（占 38%）
+                    // v2.25.1：整组（封面/光盘 + 控制条）垂直居中，控制条紧贴封面/光盘
+                    // 视觉底缘（CoverWithDisc 布局盒已同步缩放，竖屏不再有额外空隙）
                     Column(
                         Modifier
                             .fillMaxHeight()
-                            .weight(0.38f)
+                            .weight(0.38f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
                     ) {
                         Box(
-                            Modifier
-                                .weight(1f)
-                                .fillMaxWidth(),
+                            Modifier.fillMaxWidth(),
                             contentAlignment = Alignment.Center
                         ) {
                             CoverWithDisc(
@@ -361,6 +370,7 @@ fun Lyrics3DPage(
                                 onSwitchStyle = toggleStyle
                             )
                         }
+                        Spacer(Modifier.height(6.dp))
                         // v2.25：控制条缩小后放封面/光盘正下方
                         CompactControls(
                             positionMs = positionMs,
@@ -462,10 +472,11 @@ private fun CoverWithDisc(
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
-                // v2.24.1：requiredSize 锁定 190dp 设计尺寸 —— 竖屏窄列下普通 size
-                // 会被父约束横向压缩（封面变矩形/盘变椭圆）、盘心偏离封面右缘
-                // （截图反馈根因）；锁定后仅按 fit 等比缩小，横竖屏嵌合关系一致
-                .requiredSize(190.dp)
+                // v2.25.1：布局尺寸同步缩放（原为固定 190dp 布局 + graphicsLayer 视觉缩放，
+                // 竖屏 fit≈0.4 时缩掉的约 112dp 化作上下空隙，下方控制条贴不住光盘）——
+                // 布局盒改为 190*fit 后与视觉盒重合；内部子元素改用 requiredSize 锁定
+                // 设计尺寸（不受父约束压缩），溢出居中、graphicsLayer 缩后恰好填满布局盒
+                .requiredSize((190 * fit).dp)
                 .graphicsLayer { scaleX = fit; scaleY = fit }
                 // 整体视觉重心居中：嵌合体外探 89dp，回拉约半探出量
                 .offset(x = (-44).dp * fit)
@@ -476,7 +487,7 @@ private fun CoverWithDisc(
                 angle = cdAngle.value,
                 cover = discBmp.value,
                 modifier = Modifier
-                    .size(178.dp)
+                    .requiredSize(178.dp)
                     .offset(x = 95.dp)
             )
             // 封面卡片（压在光盘上）：v2.21 自定义封面图片优先
@@ -484,7 +495,7 @@ private fun CoverWithDisc(
                 BgImage(
                     customCover,
                     Modifier
-                        .size(190.dp)
+                        .requiredSize(190.dp)
                         .shadow(18.dp, RoundedCornerShape(12.dp))
                         .clip(RoundedCornerShape(12.dp))
                 )
@@ -492,7 +503,7 @@ private fun CoverWithDisc(
                 AsyncCover(
                     url = coverUrl,
                     modifier = Modifier
-                        .size(190.dp)
+                        .requiredSize(190.dp)
                         .shadow(18.dp, RoundedCornerShape(12.dp))
                         .clip(RoundedCornerShape(12.dp))
                 )
@@ -503,7 +514,7 @@ private fun CoverWithDisc(
             if (discBmp.value != null) {
                 DiscCenterOverlay(
                     modifier = Modifier
-                        .size(178.dp)
+                        .requiredSize(178.dp)
                         .offset(x = 95.dp)
                 )
             }
@@ -684,26 +695,24 @@ private fun VinylBody(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 左：黑胶唱片 + 其正下方的紧凑控制条（列宽占比与默认界面的封面列一致）
+        // v2.25.1：整组（唱片 + 控制条）垂直居中，控制条紧贴唱片底缘
         Column(
             Modifier
                 .fillMaxHeight()
-                .weight(0.38f)
+                .weight(0.38f),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
-            Box(
-                Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                contentAlignment = Alignment.Center
-            ) {
-                VinylDiscUnit(
-                    coverUrl = coverUrl,
-                    customCover = customCover,
-                    customDisc = customDisc,
-                    isPlaying = isPlaying,
-                    onToggleStyle = onToggleStyle,
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
+            VinylDiscUnit(
+                coverUrl = coverUrl,
+                customCover = customCover,
+                customDisc = customDisc,
+                isPlaying = isPlaying,
+                onToggleStyle = onToggleStyle
+                // v2.25.1：不再 fillMaxSize —— 包裹内容尺寸随唱片实际大小，
+                // 控制条才能直接贴在唱片下方（唱针臂溢出绘制不受影响）
+            )
+            Spacer(Modifier.height(6.dp))
             // v2.25：控制条缩小后放黑胶唱片正下方
             CompactControls(
                 positionMs = positionMs,
@@ -801,7 +810,9 @@ private fun VinylDiscUnit(
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
         // 盘面直径取左列宽/高的较小值留出余量；尺寸值先在直接作用域算好再进嵌套
         // lambda（maxWidth/maxHeight 不跨 composable lambda 隐式访问，v2.22.1 编译约束）
-        val discSize = minOf(maxWidth.value, maxHeight.value)
+        // v2.25.1：高度按「列高 - 底部紧凑控制条约 72dp」参与取小 —— 横屏矮列时
+        // 唱片+控制条合计不超出列高；竖屏列宽更小，此预留不改变结果
+        val discSize = minOf(maxWidth.value, maxHeight.value - 72f)
             .times(0.86f)
             .coerceIn(96f, 260f)
             .dp
@@ -1260,48 +1271,10 @@ private fun CompactControls(
     Column(
         Modifier
             .fillMaxWidth()
-            .padding(top = 2.dp, bottom = 8.dp),
+            .padding(top = 0.dp, bottom = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // 细进度条 + 两端时间（已播 | 滑条 | 总时长）
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = fmtTime(if (userSeeking) seekPos.toLong() else positionMs),
-                color = Color.White.copy(alpha = 0.55f),
-                fontSize = 9.sp
-            )
-            Slider(
-                value = if (userSeeking) seekPos else positionMs.coerceAtMost(durationMs).toFloat(),
-                valueRange = 0f..maxPos,
-                onValueChange = {
-                    userSeeking = true
-                    seekPos = it
-                },
-                onValueChangeFinished = {
-                    onSeek(seekPos.toLong())
-                    userSeeking = false
-                },
-                colors = SliderDefaults.colors(
-                    thumbColor = Color.White,
-                    activeTrackColor = Color.White.copy(alpha = 0.9f),
-                    inactiveTrackColor = Color.White.copy(alpha = 0.22f)
-                ),
-                modifier = Modifier
-                    .weight(1f)
-                    .height(20.dp)
-                    .padding(horizontal = 3.dp)
-            )
-            Text(
-                text = fmtTime(durationMs),
-                color = Color.White.copy(alpha = 0.55f),
-                fontSize = 9.sp
-            )
-        }
-
-        // 按钮行：播放模式 / 上一首 / 播放暂停 / 下一首（紧凑居中）
+        // 按钮行：播放模式 / 上一首 / 播放暂停 / 下一首（紧凑居中，与原底部控制条同序：按钮在上）
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(2.dp)
@@ -1379,6 +1352,44 @@ private fun CompactControls(
                     modifier = Modifier.size(19.dp)
                 )
             }
+        }
+
+        // 细进度条 + 两端时间（已播 | 滑条 | 总时长），置于按钮行下方（v2.25.1 修正上下序）
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = fmtTime(if (userSeeking) seekPos.toLong() else positionMs),
+                color = Color.White.copy(alpha = 0.55f),
+                fontSize = 9.sp
+            )
+            Slider(
+                value = if (userSeeking) seekPos else positionMs.coerceAtMost(durationMs).toFloat(),
+                valueRange = 0f..maxPos,
+                onValueChange = {
+                    userSeeking = true
+                    seekPos = it
+                },
+                onValueChangeFinished = {
+                    onSeek(seekPos.toLong())
+                    userSeeking = false
+                },
+                colors = SliderDefaults.colors(
+                    thumbColor = Color.White,
+                    activeTrackColor = Color.White.copy(alpha = 0.9f),
+                    inactiveTrackColor = Color.White.copy(alpha = 0.22f)
+                ),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(20.dp)
+                    .padding(horizontal = 3.dp)
+            )
+            Text(
+                text = fmtTime(durationMs),
+                color = Color.White.copy(alpha = 0.55f),
+                fontSize = 9.sp
+            )
         }
     }
 }
