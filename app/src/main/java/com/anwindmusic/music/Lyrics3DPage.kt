@@ -142,6 +142,15 @@ import kotlin.math.roundToInt
  *   随行内播放进度逐帧左移滚入出现（与 KTV 扫色同速）；
  *   横屏保持左右分栏（封面列 38% / 歌词墙 62%）不变；
  * - ③ 非高亮歌词颜色自定义（lyricSubColor）：非当前行、翻译行与 KTV 未唱部分跟随该色。
+ *
+ * v1.3 竖屏三段式重构（本次修改）：
+ * - 竖屏歌词页改为「封面光盘在上 / 3D 歌词墙居中 / 控制条贴底」上下三段式
+ *   （PortraitColumnBody），替代 v1.2.1 的「歌词墙垫底 + 左列主体悬浮」OverlayBody；
+ * - 3D 歌词墙与黑胶唱片机两界面共用同一竖屏结构，点击封面/唱片仍可互切样式；
+ * - 底部控制条恢复页面级全宽定位（上一首/下一首/播放/模式 + 进度条），尺寸适度
+ *   回调（v2.25 为收进 38% 窄列而缩小的幅度不再必要）；
+ * - 黑胶唱片直径不再为正下方控制条预留 72dp（控制条已移至页面底部，
+ *   横屏左列仍保留预留不变）。
  */
 @Composable
 fun Lyrics3DPage(
@@ -330,10 +339,9 @@ fun Lyrics3DPage(
             }
 
             // ---- 主体：v2.22 歌词秀双界面 —— 3D 歌词墙 / 黑胶唱片机 ----
-            // v2.25：控制条缩小后置于主体正下方（两界面同构），页面下部让给歌词墙；
-            // v1.2.1 竖屏优化：恢复左右分栏原版光盘位置（弃用 v1.2 上下布局），
-            // 竖屏改为「歌词墙垫底」—— 歌词墙全宽铺底、长行可自然延伸至光盘/唱片背后，
-            // 短行居中不受遮挡；横屏保持左右分栏（主体列 38% / 歌词墙 62%）不变
+            // v1.3 竖屏三段式：封面光盘在上 / 3D 歌词墙居中 / 控制条贴底
+            // （两界面同构，点击封面/唱片仍可互切样式）；
+            // 横屏保持左右分栏（主体列 38% / 歌词墙 62%）不变
             BoxWithConstraints(
                 Modifier
                     .weight(1f)
@@ -342,8 +350,8 @@ fun Lyrics3DPage(
                 val portrait = maxHeight > maxWidth
                 if (vinylStyle) {
                     if (portrait) {
-                        // 竖屏黑胶唱片机：歌词墙全宽垫底，唱片 + 控制条左列原位悬浮
-                        OverlayBody(
+                        // 竖屏黑胶唱片机：唱片在上 / 歌词墙居中 / 控制条贴底（v1.3 三段式）
+                        PortraitColumnBody(
                             lyric = lyric,
                             lyricLoading = lyricLoading,
                             positionMs = positionMs,
@@ -364,7 +372,9 @@ fun Lyrics3DPage(
                                     customCover = settings.coverImage,
                                     customDisc = settings.discImage,
                                     isPlaying = isPlaying,
-                                    onToggleStyle = toggleStyle
+                                    onToggleStyle = toggleStyle,
+                                    // v1.3：控制条已移至页面底部，唱片不再为其预留高度
+                                    reservedBottom = 0f
                                 )
                             }
                         )
@@ -393,8 +403,8 @@ fun Lyrics3DPage(
                         )
                     }
                 } else if (portrait) {
-                    // 竖屏 3D 歌词墙：歌词墙全宽垫底（长行延伸至封面/光盘背后），主体原位悬浮
-                    OverlayBody(
+                    // 竖屏 3D 歌词墙：封面光盘在上 / 歌词墙居中 / 控制条贴底（v1.3 三段式）
+                    PortraitColumnBody(
                         lyric = lyric,
                         lyricLoading = lyricLoading,
                         positionMs = positionMs,
@@ -746,7 +756,7 @@ private fun DiscCenterOverlay(modifier: Modifier = Modifier) {
  *   v2.25 控制条整体缩小后移到黑胶正下方（与默认界面的封面下方位置同构）；
  * - 右：与默认界面完全同一套 3D 透视歌词墙（俯仰/偏航/纵深/KTV 渐进），点击行跳转；
  * - 横屏保持左右排布（与默认界面一致），切换界面时歌词始终在右侧、主体在左侧
- *   （v1.2.1 起竖屏由主体处改用 [OverlayBody] 歌词墙垫底布局）；
+ *   （v1.3 起竖屏由主体处改用 [PortraitColumnBody] 上下三段式布局）；
  * - 样式经 settings.json 持久化（toggleStyle 由 Lyrics3DPage 注入）
  */
 @Composable
@@ -821,20 +831,20 @@ private fun VinylBody(
     }
 }
 
-// ==================== v1.2.1 竖屏歌词墙垫底布局 ====================
+// ==================== v1.3 竖屏上下三段式布局 ====================
 
 /**
- * v1.2.1 竖屏歌词优化 ——「歌词墙垫底」布局（3D 歌词墙 / 黑胶唱片机两界面共用）：
- * - 底层：3D 歌词墙全宽铺满 —— 长行可自然延伸至左侧光盘/唱片背后（歌词流过主体的
- *   层次效果），短行居中显示不受遮挡；同时保留 v2.25 以来的光盘原位（左列 38%
- *   垂直居中），弃用 v1.2 曾采用的上下布局；
- * - 上层：主体（封面+光盘嵌合体 或 黑胶唱片，经 [mainUnit] 注入）+ 紧凑控制条，
- *   左列 38% 垂直居中悬浮于歌词之上，点击热区仍归主体控件；
- * - 歌词墙与横屏共用同一套 [LyricsWall]（透视/纵深/KTV 渐进/点击跳转全部一致），
- *   主体列之外的歌词区域可正常点击跳转播放位置。
+ * v1.3 竖屏布局 ——「封面光盘在上 / 歌词居中 / 控制条在下」三段式
+ * （3D 歌词墙 / 黑胶唱片机两界面共用，替代 v1.2.1 的歌词墙垫底 OverlayBody）：
+ * - 顶部：主体单元（封面+光盘嵌合体 或 黑胶唱片，经 [mainUnit] 注入）水平垂直居中，
+ *   约占去掉控制条后剩余高度的 35%，点击仍可切换 3D 墙 / 黑胶界面；
+ * - 中部：3D 歌词墙占据其余全部空间 —— 与横屏共用同一套 [LyricsWall]
+ *   （透视/纵深/KTV 渐进/点击跳转全部一致），竖屏保留单行滚动渲染；
+ *   当前行经大对称 contentPadding + scrollToItem 自动定位到歌词区上部约 34% 处；
+ * - 底部：紧凑控制条（模式/上一首/播放/下一首 + 进度条）全宽贴底。
  */
 @Composable
-private fun OverlayBody(
+private fun PortraitColumnBody(
     lyric: LyricsDoc?,
     lyricLoading: Boolean,
     positionMs: Long,
@@ -849,11 +859,20 @@ private fun OverlayBody(
     onNext: () -> Unit,
     onPrev: () -> Unit,
     onCycleMode: () -> Unit,
-    /** 左列主体单元：封面+光盘嵌合体（3D 墙界面）或黑胶唱片（唱片机界面） */
+    /** 顶部主体单元：封面+光盘嵌合体（3D 墙界面）或黑胶唱片（唱片机界面） */
     mainUnit: @Composable () -> Unit
 ) {
-    Box(Modifier.fillMaxSize()) {
-        // 底层：全宽 3D 歌词墙（行尾靠右；长行单行随播放滚动，延伸至主体背后）
+    Column(Modifier.fillMaxSize()) {
+        // 顶部：封面光盘 / 黑胶唱片（居中；约占去掉控制条后剩余空间的 35%）
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .weight(0.35f),
+            contentAlignment = Alignment.Center
+        ) {
+            mainUnit()
+        }
+        // 中部：3D 歌词墙（竖屏单行滚动；占据顶部以下、控制条以上的全部空间）
         LyricsWallArea(
             lyric = lyric,
             lyricLoading = lyricLoading,
@@ -862,44 +881,29 @@ private fun OverlayBody(
             positionProvider = positionProvider,
             onSeek = onSeek,
             singleLineScroll = true,
-            modifier = Modifier.matchParentSize()
+            modifier = Modifier
+                .weight(0.65f)
+                .fillMaxWidth()
         )
-        // 上层：左列主体 + 控制条（原位悬浮；列外区域点击穿透给歌词墙）
-        Row(
+        // 底部：紧凑控制条（按钮行在上、进度条在下，全宽贴底）
+        Box(
             Modifier
-                .matchParentSize()
-                .padding(horizontal = 24.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 6.dp)
         ) {
-            Column(
-                Modifier
-                    .fillMaxHeight()
-                    .weight(0.38f),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Box(
-                    Modifier.fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    mainUnit()
-                }
-                Spacer(Modifier.height(6.dp))
-                CompactControls(
-                    positionMs = positionMs,
-                    durationMs = durationMs,
-                    isPlaying = isPlaying,
-                    isPreparing = isPreparing,
-                    playMode = playMode,
-                    onSeek = onSeek,
-                    onToggle = onToggle,
-                    onNext = onNext,
-                    onPrev = onPrev,
-                    onCycleMode = onCycleMode
-                )
-            }
-            // 右侧 62% 占位：不拦截触摸，歌词墙在底层照常可点击跳转
-            Spacer(Modifier.weight(0.62f))
+            CompactControls(
+                positionMs = positionMs,
+                durationMs = durationMs,
+                isPlaying = isPlaying,
+                isPreparing = isPreparing,
+                playMode = playMode,
+                onSeek = onSeek,
+                onToggle = onToggle,
+                onNext = onNext,
+                onPrev = onPrev,
+                onCycleMode = onCycleMode
+            )
         }
     }
 }
@@ -962,7 +966,7 @@ private fun LyricsWallArea(
     }
 }
 
-/** 黑胶唱片单元：旋转盘面 + 唱针臂 + 切换轻提示；整块可点击切换界面（尺寸随左列自适应） */
+/** 黑胶唱片单元：旋转盘面 + 唱针臂 + 切换轻提示；整块可点击切换界面（尺寸随容器自适应） */
 @Composable
 private fun VinylDiscUnit(
     coverUrl: String?,
@@ -970,16 +974,18 @@ private fun VinylDiscUnit(
     customDisc: String?,
     isPlaying: Boolean,
     onToggleStyle: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** v1.3：为正下方控制条预留的高度（dp）；竖屏上下布局中控制条已贴底，传 0f */
+    reservedBottom: Float = 72f
 ) {
     val spin = rememberSpinAngle(isPlaying)
     val artwork = rememberDiscArtwork(coverUrl, customDisc ?: customCover)
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
-        // 盘面直径取左列宽/高的较小值留出余量；尺寸值先在直接作用域算好再进嵌套
+        // 盘面直径取容器宽/高的较小值留出余量；尺寸值先在直接作用域算好再进嵌套
         // lambda（maxWidth/maxHeight 不跨 composable lambda 隐式访问，v2.22.1 编译约束）
-        // v2.25.1：高度按「列高 - 底部紧凑控制条约 72dp」参与取小 —— 横屏矮列时
-        // 唱片+控制条合计不超出列高；竖屏列宽更小，此预留不改变结果
-        val discSize = minOf(maxWidth.value, maxHeight.value - 72f)
+        // v2.25.1：高度按「容器高 - 底部紧凑控制条约 72dp（reservedBottom）」参与取小
+        // —— 横屏矮列时唱片+控制条合计不超出列高；v1.3 竖屏上下布局传 0f（控制条已贴底）
+        val discSize = minOf(maxWidth.value, maxHeight.value - reservedBottom)
             .times(0.86f)
             .coerceIn(96f, 260f)
             .dp
@@ -1551,12 +1557,13 @@ private fun KtvSweepText(
 // ==================== 紧凑控制条（v2.25） ====================
 
 /**
- * v2.25 紧凑控制条 —— 由原页面底部全宽 BottomControls 缩小而来：
- * - 位置：两个歌词界面（3D 歌词墙 / 黑胶唱片机）左列封面/光盘正下方；
- * - 尺寸：播放键 44dp→34dp、前后曲/模式图标 28/18dp→18/14dp、进度条 22dp→20dp、
- *   时间字号 11sp→9sp，整体高度约缩小 35%；改用小尺寸可点击 Icon（不再用 48dp
- *   最小触摸目标的 IconButton），宽度可收进 38% 窄列；
- * - 进度时间改为 Android 常见的「已播 / 总时长」分列滑条两端样式。
+ * 紧凑控制条（v2.25 引入；v1.3 位置与尺寸调整）：
+ * - 位置：竖屏为歌词页底部全宽（v1.3 三段式贴底）；横屏仍在左列封面/光盘正下方；
+ * - 尺寸：v2.25 曾为收进 38% 窄列整体缩小约 35%；v1.3 控制条回到页面级全宽后
+ *   适度回调（播放键 34→40dp、前后曲 28/19→32/22dp、模式 24/14→26/15dp、
+ *   进度条 20→24dp、时间 9→10sp、按钮间距 2→6dp），仍保持紧凑可点击 Icon；
+ * - 内部顺序：按钮行（模式/上一首/播放/下一首）在上、进度条（已播 | 滑条 | 总时长）
+ *   在下。
  */
 @Composable
 private fun CompactControls(
@@ -1584,12 +1591,12 @@ private fun CompactControls(
         // 按钮行：播放模式 / 上一首 / 播放暂停 / 下一首（紧凑居中，与原底部控制条同序：按钮在上）
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             // 播放模式
             Box(
                 Modifier
-                    .size(24.dp)
+                    .size(26.dp)
                     .clip(CircleShape)
                     .clickable(onClick = onCycleMode),
                 contentAlignment = Alignment.Center
@@ -1602,13 +1609,13 @@ private fun CompactControls(
                     },
                     contentDescription = "播放模式",
                     tint = Color.White.copy(alpha = 0.75f),
-                    modifier = Modifier.size(14.dp)
+                    modifier = Modifier.size(15.dp)
                 )
             }
             // 上一首
             Box(
                 Modifier
-                    .size(28.dp)
+                    .size(32.dp)
                     .clip(CircleShape)
                     .clickable(onClick = onPrev),
                 contentAlignment = Alignment.Center
@@ -1617,13 +1624,13 @@ private fun CompactControls(
                     Icons.Filled.SkipPrevious,
                     contentDescription = "上一首",
                     tint = Color.White,
-                    modifier = Modifier.size(19.dp)
+                    modifier = Modifier.size(22.dp)
                 )
             }
-            // 播放/暂停（缩小圆环按钮）
+            // 播放/暂停（圆环按钮）
             Box(
                 Modifier
-                    .size(34.dp)
+                    .size(40.dp)
                     .clip(CircleShape)
                     .background(Color.White.copy(alpha = 0.12f))
                     .clickable(onClick = onToggle),
@@ -1633,21 +1640,21 @@ private fun CompactControls(
                     CircularProgressIndicator(
                         color = Color.White,
                         strokeWidth = 2.dp,
-                        modifier = Modifier.size(14.dp)
+                        modifier = Modifier.size(16.dp)
                     )
                 } else {
                     Icon(
                         imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                         contentDescription = if (isPlaying) "暂停" else "播放",
                         tint = Color.White,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(24.dp)
                     )
                 }
             }
             // 下一首
             Box(
                 Modifier
-                    .size(28.dp)
+                    .size(32.dp)
                     .clip(CircleShape)
                     .clickable(onClick = onNext),
                 contentAlignment = Alignment.Center
@@ -1656,7 +1663,7 @@ private fun CompactControls(
                     Icons.Filled.SkipNext,
                     contentDescription = "下一首",
                     tint = Color.White,
-                    modifier = Modifier.size(19.dp)
+                    modifier = Modifier.size(22.dp)
                 )
             }
         }
@@ -1669,7 +1676,7 @@ private fun CompactControls(
             Text(
                 text = fmtTime(if (userSeeking) seekPos.toLong() else positionMs),
                 color = Color.White.copy(alpha = 0.55f),
-                fontSize = 9.sp
+                fontSize = 10.sp
             )
             Slider(
                 value = if (userSeeking) seekPos else positionMs.coerceAtMost(durationMs).toFloat(),
@@ -1689,13 +1696,13 @@ private fun CompactControls(
                 ),
                 modifier = Modifier
                     .weight(1f)
-                    .height(20.dp)
-                    .padding(horizontal = 3.dp)
+                    .height(24.dp)
+                    .padding(horizontal = 6.dp)
             )
             Text(
                 text = fmtTime(durationMs),
                 color = Color.White.copy(alpha = 0.55f),
-                fontSize = 9.sp
+                fontSize = 10.sp
             )
         }
     }
