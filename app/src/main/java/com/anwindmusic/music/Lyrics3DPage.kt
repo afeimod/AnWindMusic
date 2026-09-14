@@ -151,6 +151,14 @@ import kotlin.math.roundToInt
  *   回调（v2.25 为收进 38% 窄列而缩小的幅度不再必要）；
  * - 黑胶唱片直径不再为正下方控制条预留 72dp（控制条已移至页面底部，
  *   横屏左列仍保留预留不变）。
+ *
+ * v1.3.1 竖屏歌词居中修正：
+ * - 水平居中：竖屏三段式关闭单行滚动（singleLineScroll 的「行尾靠右 + 长行单行
+ *   铺开」是 v1.2.2 歌词墙垫底布局的设计 —— 长行延伸至光盘背后）；光盘已上移、
+ *   不再与歌词重叠，歌词改回水平居中，长行自动两行折行；
+ * - 垂直居中：歌词区上下 padding 0.34 → 0.42 —— scrollToItem 把当前行顶部
+ *   定位在顶部 padding 下缘，42% 时当前行块正好居于歌词区中部（旧值为全屏
+ *   歌词墙的偏上构图，三段式歌词区变矮后偏高明显）。
  */
 @Composable
 fun Lyrics3DPage(
@@ -839,8 +847,9 @@ private fun VinylBody(
  * - 顶部：主体单元（封面+光盘嵌合体 或 黑胶唱片，经 [mainUnit] 注入）水平垂直居中，
  *   约占去掉控制条后剩余高度的 35%，点击仍可切换 3D 墙 / 黑胶界面；
  * - 中部：3D 歌词墙占据其余全部空间 —— 与横屏共用同一套 [LyricsWall]
- *   （透视/纵深/KTV 渐进/点击跳转全部一致），竖屏保留单行滚动渲染；
- *   当前行经大对称 contentPadding + scrollToItem 自动定位到歌词区上部约 34% 处；
+ *   （透视/纵深/KTV 渐进/点击跳转全部一致），歌词行水平居中、长行两行折行
+ *   （v1.3.1 起关闭单行滚动：行尾靠右是旧「歌词墙垫底」布局的设计）；
+ *   当前行经大对称 contentPadding（42%）+ scrollToItem 自动垂直居中；
  * - 底部：紧凑控制条（模式/上一首/播放/下一首 + 进度条）全宽贴底。
  */
 @Composable
@@ -872,7 +881,9 @@ private fun PortraitColumnBody(
         ) {
             mainUnit()
         }
-        // 中部：3D 歌词墙（竖屏单行滚动；占据顶部以下、控制条以上的全部空间）
+        // 中部：3D 歌词墙（歌词水平居中；占据顶部以下、控制条以上的全部空间）；
+        // v1.3.1 关闭单行滚动 —— 行尾靠右是 v1.2.2「歌词墙垫底」布局的设计
+        // （长行延伸至光盘背后），三段式中光盘已上移，歌词改回居中 + 两行折行
         LyricsWallArea(
             lyric = lyric,
             lyricLoading = lyricLoading,
@@ -880,7 +891,7 @@ private fun PortraitColumnBody(
             settingsProvider = settingsProvider,
             positionProvider = positionProvider,
             onSeek = onSeek,
-            singleLineScroll = true,
+            singleLineScroll = false,
             modifier = Modifier
                 .weight(0.65f)
                 .fillMaxWidth()
@@ -1209,7 +1220,10 @@ private fun LyricsWall(
     val wallSettings = settingsProvider()
 
     BoxWithConstraints(modifier) {
-        val padV = maxHeight * 0.34f
+        // v1.3.1：0.34f → 0.42f —— scrollToItem 将当前行顶部定位在顶部 padding 下缘，
+        // 上下各留 42% 使当前行块（约 16%）垂直居中；0.34f 是全屏歌词墙的偏上构图，
+        // 竖屏三段式歌词区变矮后当前行明显偏高
+        val padV = maxHeight * 0.42f
         LazyColumn(
             state = listState,
             contentPadding = PaddingValues(top = padV, bottom = padV),
