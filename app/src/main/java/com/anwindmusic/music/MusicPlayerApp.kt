@@ -2,6 +2,7 @@ package com.anwindmusic.music
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -67,6 +68,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -450,6 +452,9 @@ fun MusicContent(
     }
     // 向全内容区提供自定义背景激活标记与动态清晰度配色方案
     // （表面控件自动半透明融入背景；文字按背景明暗自适应颜色+光晕）
+    // v2.26 横屏检测：横屏（手机横屏/平板横屏）下，底部播放条与导航栏切换为紧凑单行布局，
+    // 避免竖版三行播放条 + 标准底栏合计约 210dp 在横屏时压得内容区只剩一条缝
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     CompositionLocalProvider(
         LocalHomeCustomBg provides homeCustomBg,
         LocalAdaptiveScheme provides scheme
@@ -666,24 +671,46 @@ fun MusicContent(
                 }
 
                 if (!showLyrics) {
-                    PlayerBarMobile(
-                        engine = engine,
-                        isFav = engine.currentSong?.let { favKeys.contains(it.key) } ?: false,
-                        // v1.2：设置里自定义了封面图时，播放处优先显示该封面（与歌词页/通知一致）
-                        coverOverride = musicSettings.coverImage,
-                        onToggleFav = {
-                            engine.currentSong?.let { song ->
-                                engine.store.toggleFavorite(song)
-                                refreshLibrary()
-                            }
-                        },
-                        lyricsOpen = showLyrics,
-                        onToggleLyrics = { showLyrics = !showLyrics }
-                    )
-                    MusicBottomNav(
-                        page = page,
-                        onPageChange = { page = it }
-                    )
+                    // v2.26 横屏：紧凑播放条 + 图标底栏（合计约 110dp）；竖屏：原版布局不变
+                    if (isLandscape) {
+                        PlayerBarCompact(
+                            engine = engine,
+                            isFav = engine.currentSong?.let { favKeys.contains(it.key) } ?: false,
+                            // v1.2：设置里自定义了封面图时，播放处优先显示该封面（与歌词页/通知一致）
+                            coverOverride = musicSettings.coverImage,
+                            onToggleFav = {
+                                engine.currentSong?.let { song ->
+                                    engine.store.toggleFavorite(song)
+                                    refreshLibrary()
+                                }
+                            },
+                            lyricsOpen = showLyrics,
+                            onToggleLyrics = { showLyrics = !showLyrics }
+                        )
+                        MusicBottomNavCompact(
+                            page = page,
+                            onPageChange = { page = it }
+                        )
+                    } else {
+                        PlayerBarMobile(
+                            engine = engine,
+                            isFav = engine.currentSong?.let { favKeys.contains(it.key) } ?: false,
+                            // v1.2：设置里自定义了封面图时，播放处优先显示该封面（与歌词页/通知一致）
+                            coverOverride = musicSettings.coverImage,
+                            onToggleFav = {
+                                engine.currentSong?.let { song ->
+                                    engine.store.toggleFavorite(song)
+                                    refreshLibrary()
+                                }
+                            },
+                            lyricsOpen = showLyrics,
+                            onToggleLyrics = { showLyrics = !showLyrics }
+                        )
+                        MusicBottomNav(
+                            page = page,
+                            onPageChange = { page = it }
+                        )
+                    }
                 }
             }
         }
@@ -1018,6 +1045,259 @@ private fun PlayerBarMobile(
                 modifier = Modifier
                     .width(112.dp)
                     .height(32.dp)
+            )
+        }
+    }
+}
+
+// ==================== 底部播放条（v2.26 横屏紧凑版） ====================
+
+/**
+ * v2.26 横屏紧凑播放条：竖版三行播放条（进度 32dp + 信息行 + 控制行 46dp ≈ 130dp）
+ * 在横屏时与底栏合计约 210dp，内容区被压得过矮；本组件压缩为两层，总高约 62dp：
+ * - 细进度行（约 20dp）：9sp 时间标签 + 20dp 细滑条，拖动进度与竖屏版完全一致
+ * - 单行控制行（40dp）：封面(30dp) + 歌名/歌手(单行省略) + 词 + 播放模式 + 收藏
+ *   + 上一首/播放/下一首；横屏下隐藏音量滑条（系统音量键/音量面板可调），
+ *   平板横屏更宽，一行放下全部控件毫无压力，观感对齐平板应用
+ */
+@Composable
+private fun PlayerBarCompact(
+    engine: MusicEngine,
+    isFav: Boolean,
+    /** v1.2：设置里自定义的封面图（非空时播放处直接显示它，不再回落歌曲封面/默认封面） */
+    coverOverride: String?,
+    onToggleFav: () -> Unit,
+    lyricsOpen: Boolean,
+    onToggleLyrics: () -> Unit
+) {
+    val song = engine.currentSong
+    val sch = LocalAdaptiveScheme.current
+    var userSeeking by remember { mutableStateOf(false) }
+    var seekPos by remember { mutableStateOf(0f) }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(if (sch.isCustom) sch.glass else Color.White)
+            .padding(top = 2.dp)
+    ) {
+        // 细进度行：当前时间 - 细滑条 - 总时长
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = fmtTime(if (userSeeking) seekPos.toLong() else engine.positionMs),
+                fontSize = 9.sp,
+                color = if (sch.isCustom) sch.textTertiary else Mc.textTertiary,
+                style = TextStyle(shadow = sch.shadow)
+            )
+            Slider(
+                value = if (userSeeking) seekPos else {
+                    engine.positionMs.coerceAtMost(engine.durationMs).toFloat()
+                },
+                valueRange = 0f..engine.durationMs.coerceAtLeast(1L).toFloat(),
+                onValueChange = {
+                    userSeeking = true
+                    seekPos = it
+                },
+                onValueChangeFinished = {
+                    engine.seekTo(seekPos.toLong())
+                    userSeeking = false
+                },
+                colors = SliderDefaults.colors(
+                    thumbColor = Mc.red,
+                    activeTrackColor = Mc.red,
+                    inactiveTrackColor = if (sch.isCustom) sch.track else Color(0xFFE5E5E8)
+                ),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(20.dp)
+                    .padding(horizontal = 4.dp)
+            )
+            Text(
+                text = fmtTime(engine.durationMs),
+                fontSize = 9.sp,
+                color = if (sch.isCustom) sch.textTertiary else Mc.textTertiary,
+                style = TextStyle(shadow = sch.shadow)
+            )
+        }
+
+        // 控制行：封面 + 歌名/歌手 | 词 模式 收藏 | 上一首 播放 下一首（单行 40dp）
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(40.dp)
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // 封面（点击打开/关闭 3D 歌词秀）
+            Box(
+                Modifier
+                    .size(30.dp)
+                    .clip(RoundedCornerShape(5.dp))
+                    .clickable(onClick = onToggleLyrics)
+            ) {
+                if (!coverOverride.isNullOrEmpty()) {
+                    BgImage(coverOverride, Modifier.size(30.dp))
+                } else {
+                    AsyncCover(song = song, modifier = Modifier.size(30.dp))
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            // 歌名 + 歌手（各单行省略）
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = song?.name ?: "未在播放",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = if (sch.isCustom) sch.textPrimary else Mc.textPrimary,
+                    style = TextStyle(shadow = sch.shadow),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = song?.artist ?: "云音乐，发现好音乐",
+                    fontSize = 9.sp,
+                    color = if (sch.isCustom) sch.textTertiary else Mc.textTertiary,
+                    style = TextStyle(shadow = sch.shadow),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+
+            // 词 按钮（打开/关闭 3D 歌词秀）
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(if (lyricsOpen) Mc.red else Color.Transparent)
+                    .clickable(onClick = onToggleLyrics)
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = "词",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (lyricsOpen) Color.White
+                            else if (sch.isCustom) sch.textSecondary else Mc.textSecondary,
+                    style = TextStyle(shadow = if (lyricsOpen) null else sch.shadow)
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+
+            // 播放模式
+            Icon(
+                imageVector = when (engine.playMode) {
+                    MusicStore.MODE_LOOP_ONE -> Icons.Filled.RepeatOne
+                    MusicStore.MODE_SHUFFLE -> Icons.Filled.Shuffle
+                    else -> Icons.Filled.Repeat
+                },
+                contentDescription = "播放模式",
+                tint = if (sch.isCustom) sch.textSecondary else Mc.textSecondary,
+                modifier = Modifier
+                    .size(16.dp)
+                    .clickable { engine.cycleMode() }
+            )
+            Spacer(Modifier.width(10.dp))
+
+            // 收藏
+            Icon(
+                imageVector = if (isFav) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                contentDescription = "喜欢",
+                tint = if (isFav) Mc.red
+                       else if (sch.isCustom) sch.textSecondary else Mc.textSecondary,
+                modifier = Modifier
+                    .size(16.dp)
+                    .clickable(onClick = onToggleFav)
+            )
+            Spacer(Modifier.width(12.dp))
+
+            // 上一首 / 播放 / 下一首
+            Icon(
+                Icons.Filled.SkipPrevious,
+                contentDescription = "上一首",
+                tint = if (sch.isCustom) sch.textPrimary else Mc.textPrimary,
+                modifier = Modifier
+                    .size(20.dp)
+                    .clickable { engine.prev() }
+            )
+            Spacer(Modifier.width(10.dp))
+            Box(
+                Modifier
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(Mc.red)
+                    .clickable { engine.toggle() },
+                contentAlignment = Alignment.Center
+            ) {
+                if (engine.isPreparing) {
+                    CircularProgressIndicator(
+                        color = Color.White,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(14.dp)
+                    )
+                } else {
+                    Icon(
+                        imageVector = if (engine.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = if (engine.isPlaying) "暂停" else "播放",
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+            Icon(
+                Icons.Filled.SkipNext,
+                contentDescription = "下一首",
+                tint = if (sch.isCustom) sch.textPrimary else Mc.textPrimary,
+                modifier = Modifier
+                    .size(20.dp)
+                    .clickable { engine.next() }
+            )
+        }
+    }
+}
+
+// ==================== 底部导航栏（v2.26 横屏紧凑版） ====================
+
+/**
+ * v2.26 底部导航栏（横屏紧凑版）：仅图标（20dp）去掉文字标签，整栏固定 46dp，
+ * 较标准 NavigationBar（80dp）省约四成高度；图标语义由 contentDescription 保留，
+ * 无障碍与竖屏版一致。平板横屏下五枚图标均匀铺开，观感对齐平板应用。
+ */
+@Composable
+private fun MusicBottomNavCompact(page: Page, onPageChange: (Page) -> Unit) {
+    val sch = LocalAdaptiveScheme.current
+    HorizontalDivider(
+        thickness = 0.5.dp,
+        color = if (sch.isCustom) sch.divider else Mc.divider
+    )
+    NavigationBar(
+        modifier = Modifier.height(46.dp),
+        containerColor = if (sch.isCustom) sch.glass else Color.White,
+        tonalElevation = 0.dp
+    ) {
+        val items = listOf(
+            Page.SEARCH to Icons.Filled.Search,
+            Page.FAVORITES to Icons.Filled.Favorite,
+            Page.RECENT to Icons.Filled.History,
+            Page.LOCAL to Icons.Filled.LibraryMusic,
+            Page.DOWNLOADS to Icons.Filled.Download
+        )
+        for ((p, icon) in items) {
+            NavigationBarItem(
+                selected = page == p,
+                onClick = { onPageChange(p) },
+                icon = { Icon(icon, contentDescription = p.label, modifier = Modifier.size(20.dp)) },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = Mc.red,
+                    // 自定义背景下未选中图标实心自适应色，保证可读
+                    unselectedIconColor = sch.textSecondary,
+                    indicatorColor = Color(0x1AEC4141)
+                )
             )
         }
     }
