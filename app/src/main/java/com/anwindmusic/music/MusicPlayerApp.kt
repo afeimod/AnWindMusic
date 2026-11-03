@@ -3,6 +3,7 @@ package com.anwindmusic.music
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
+import android.media.MediaScannerConnection
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -84,6 +85,7 @@ import kotlinx.coroutines.launch
  * - 纯手机布局：顶部标题栏 + 内容页 + 紧凑播放条 + 底部导航栏（对照网易云音乐手机版）
  * - 功能与桌面版一致：搜索播放、我喜欢、最近播放、本地音乐、歌曲/歌词下载、
  *   3D 歌词秀（Lyrics3DPage）、桌面歌词悬浮窗（LyricOverlayService）、设置中心
+ * - v2.25 修复：搜索里下载的音乐自动加入本地音乐库（记录下载文件 + 扫描合并 + 自动重扫）
  * - 在线音乐与歌词数据源：酷我搜索/播放链接 + 酷我/网易云/QQ/LRCLIB 四级词源回退
  * - 背景图片/扫描目录选择改走系统文件选择器（MainActivity 经 [PickBus] 回传）
  * - 后台持续播放：起播即拉起前台服务 PlaybackService（通知栏播放控制 + 锁屏线控）
@@ -198,7 +200,11 @@ fun MusicContent(
     fun scanLocal() {
         scanning = true
         uiScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            val found = queryLocalSongs(context, musicSettings.scanMode, musicSettings.scanDirs)
+            // v2.25：合并 App 记录的已下载音频 —— 下载完成的歌无需手动扫描即入本地曲库
+            val found = queryLocalSongs(
+                context, musicSettings.scanMode, musicSettings.scanDirs,
+                engine.store.loadDownloadedPaths()
+            )
             localSongs = found
             scanning = false
         }
@@ -366,8 +372,21 @@ fun MusicContent(
                     File(dir, file.nameWithoutExtension + ".lrc").writeText(LrcParser.toLrcText(lyric))
                 }
             }
+            // 4) v2.25 修复：下载完成自动加入本地音乐库
+            //    a) 持久化已下载文件路径（本地曲库扫描时合并，不依赖 MediaStore 异步索引）
+            engine.store.addDownloadedPath(file.absolutePath)
+            //    b) 回填 downloadedPath：我喜欢/最近播放中同曲下次播放优先用本地文件
+            engine.store.backfillDownloadedPath(song.key, file.absolutePath)
+            //    c) 通知系统媒体库立即索引（其他播放器也能看到）
+            runCatching {
+                MediaScannerConnection.scanFile(
+                    context, arrayOf(file.absolutePath), arrayOf("audio/mpeg"), null
+                )
+            }
             toast("下载完成：${file.name}")
             refreshLibrary()
+            //    d) 自动重扫本地曲库，新下载的歌曲立即出现在「本地音乐」页
+            scanLocal()
         }
     }
 
