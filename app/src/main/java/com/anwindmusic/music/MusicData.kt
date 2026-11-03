@@ -284,9 +284,9 @@ data class MusicSettings(
     // ---- 屏幕方向（独立版新增） ----
     /** 0 跟随系统 / 1 竖屏 / 2 横屏 / 3 自动旋转（重力感应） */
     val orientation: Int = ORIENTATION_AUTO,
-    // ---- 本地扫描 ----
-    val scanMode: Int = SCAN_ALL,
-    /** 指定目录扫描的绝对路径列表 */
+    // ---- 本地扫描（v2.25.1：默认指定目录模式，且应用下载目录默认纳入扫描） ----
+    val scanMode: Int = SCAN_DIRS,
+    /** 指定目录扫描的绝对路径列表（新装首次自动种子化下载目录） */
     val scanDirs: List<String> = emptyList()
 ) {
     @Suppress("unused")
@@ -488,6 +488,13 @@ class MusicStore(private val context: Context) {
                 }
             }
         }
+        // v2.25.1：从无配置（新装/从未保存过目录）时，默认把应用下载目录纳入扫描列表 ——
+        // 指定目录模式下下载的音乐天然在曲库内，永不被目录过滤屏蔽；
+        // 用户手动删除后（列表非空）不再重复种子化，尊重用户选择
+        if (dirs.isEmpty()) {
+            val dl = musicDownloadDir(context).absolutePath
+            if (dl.isNotEmpty()) dirs.add(dl)
+        }
         return MusicSettings(
             lyricBgMode = o.optInt("lyricBgMode", MusicSettings.BG_COVER),
             lyricBgColor = o.optInt("lyricBgColor", 0xFF191922.toInt()),
@@ -531,7 +538,7 @@ class MusicStore(private val context: Context) {
             homeBgVideo = o.optString("homeBgVideo", "").takeIf { it.isNotEmpty() },
             homeImageDim = o.optDouble("homeImageDim", 0.25).toFloat().coerceIn(0f, 0.95f),
             orientation = o.optInt("orientation", MusicSettings.ORIENTATION_AUTO).coerceIn(0, 3),
-            scanMode = o.optInt("scanMode", MusicSettings.SCAN_ALL),
+            scanMode = o.optInt("scanMode", MusicSettings.SCAN_DIRS),
             scanDirs = dirs
         )
     }

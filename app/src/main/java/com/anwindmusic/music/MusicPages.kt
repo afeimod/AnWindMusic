@@ -707,21 +707,27 @@ private val AUDIO_EXTENSIONS = setOf("mp3", "flac", "wav", "m4a", "ogg", "aac", 
 
 /**
  * 扫描本机音频（IO 线程调用）：
+ * - [MusicSettings.SCAN_DIRS]（v2.25.1 起为默认）：仅遍历指定目录 + 应用下载目录（File 递归，
+ *   依赖“所有文件访问”权限，避免把铃声/语音等无关音频扫进曲库）。
+ *   应用下载目录强制追加、不可被屏蔽（v2.25.1：下载的音乐天然在曲库内）
  * - [MusicSettings.SCAN_ALL]：MediaStore 全库扫描（is_music != 0，时长 > 30s）
- * - [MusicSettings.SCAN_DIRS]：仅遍历用户指定的目录（File 递归，
- *   依赖“所有文件访问”权限，避免把铃声/语音等无关音频扫进曲库）
  * - [downloadedPaths]：App 内下载完成的音频文件（v2.25 修复：搜索下载的音乐
  *   自动加入本地音乐库）——无论 MediaStore 是否已异步索引、扫描模式为何，
  *   下载的歌曲都会合并进结果，立即出现在「本地音乐」页
  */
 fun queryLocalSongs(
     context: Context,
-    scanMode: Int = MusicSettings.SCAN_ALL,
+    scanMode: Int = MusicSettings.SCAN_DIRS,
     scanDirs: List<String> = emptyList(),
     downloadedPaths: List<String> = emptyList()
 ): List<SongInfo> {
-    val base = if (scanMode == MusicSettings.SCAN_DIRS && scanDirs.isNotEmpty()) {
-        scanSpecifiedDirs(scanDirs)
+    val base = if (scanMode == MusicSettings.SCAN_DIRS) {
+        // v2.25.1：指定目录模式强制追加应用下载目录（去重，scanSpecifiedDirs 内部亦有去重），
+        // 即使用户未选/删除了下载目录，下载的音乐也永不被目录过滤屏蔽
+        val dirs = scanDirs.toMutableList()
+        val dlDir = musicDownloadDir(context).absolutePath
+        if (dlDir.isNotEmpty() && dirs.none { it == dlDir }) dirs.add(dlDir)
+        scanSpecifiedDirs(dirs)
     } else {
         scanMediaStore(context)
     }
