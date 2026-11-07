@@ -26,6 +26,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import com.anwindmusic.music.MusicContent
 import com.anwindmusic.music.PickBus
+import com.anwindmusic.music.TvCompat
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -100,6 +101,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // TV 兼容：进程内一次性检测设备是否为 Android TV（UiModeManager）。
+        // TvCompat.tvFocus 等遥控适配逻辑全部由此开关驱动，手机/平板行为不变
+        TvCompat.init(this)
         setupEdgeToEdge()
         requestEssentialPermissions()
         setContent {

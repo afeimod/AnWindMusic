@@ -66,6 +66,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
@@ -165,6 +168,11 @@ fun MusicContent(
     // ===== 页面状态 =====
     var page by remember { mutableStateOf(Page.SEARCH) }
     var showLyrics by remember { mutableStateOf(false) }
+    // 返回键链：进入设置页前的页面（BACK 从设置页原路返回，TV 遥控无手势返回必需）
+    var preSettingsPage by remember { mutableStateOf(Page.SEARCH) }
+    // TV：根节点焦点跟踪 —— 页面切换销毁了焦点元素导致全应用失焦时，
+    // 底部导航栏把焦点还给当前选中项，遥控器任何时刻都有可用焦点目标
+    var anyFocus by remember { mutableStateOf(false) }
 
     // ===== 搜索状态（页面间切换保留） =====
     var query by remember { mutableStateOf("") }
@@ -282,12 +290,15 @@ fun MusicContent(
 
     // ===== 屏幕方向（设置页「屏幕方向」即时生效；manifest 已锁 configChanges 不重建） =====
     DisposableEffect(musicSettings.orientation) {
-        (context as? Activity)?.requestedOrientation = when (musicSettings.orientation) {
-            MusicSettings.ORIENTATION_PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            MusicSettings.ORIENTATION_LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-            MusicSettings.ORIENTATION_SENSOR -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
-            else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED   // 跟随系统
-        }
+        (context as? Activity)?.requestedOrientation =
+            // TV：电视恒为横屏，忽略竖屏/传感器设置（竖版三段式歌词页在 TV 上不适用）
+            if (TvCompat.isTv) ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            else when (musicSettings.orientation) {
+                MusicSettings.ORIENTATION_PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                MusicSettings.ORIENTATION_LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                MusicSettings.ORIENTATION_SENSOR -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+                else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED   // 跟随系统
+            }
         onDispose { }
     }
 
@@ -455,9 +466,12 @@ fun MusicContent(
         }
     }
 
-    // 返回键：歌词页优先退出；沉浸式全屏先退出全屏
+    // ===== 返回键链（遥控 BACK / 系统返回手势共用；后注册者优先）=====
+    // ① 歌词页沉浸式全屏 → 先退出全屏；② 歌词页 → 关闭歌词；
+    // ③ 设置页 → 回到进入前的页面（原实现无此项，TV 遥控只能杀应用退出）
     BackHandler(enabled = showLyrics) { showLyrics = false }
     BackHandler(enabled = showLyrics && isFullscreen) { onToggleFullscreen() }
+    BackHandler(enabled = !showLyrics && page == Page.SETTINGS) { page = preSettingsPage }
 
     // ===== 布局：顶部栏 + 内容页（歌词页覆盖） + 播放条 + 底部导航 =====
     val homeBgModifier = when (musicSettings.homeBgMode) {
@@ -479,8 +493,9 @@ fun MusicContent(
         LocalAdaptiveScheme provides scheme
     ) {
         // imePadding：edge-to-edge 下键盘不挤压窗口（API 30+），由 insets 把整体抬到键盘上方；
-        // API 24-29 的 adjustResize 窗口缩放路径下 ime insets 为 0，此修饰符自动无操作
-        Box(Modifier.fillMaxSize().imePadding()) {
+        // API 24-29 的 adjustResize 窗口缩放路径下 ime insets 为 0，此修饰符自动无操作；
+        // onFocusChanged（TV）：根节点 hasFocus = 任一子孙持有焦点，供底部导航焦点归还机制使用
+        Box(Modifier.fillMaxSize().imePadding().onFocusChanged { anyFocus = it.hasFocus }) {
             // 自定义图片/视频背景 + 压暗层（仅对应模式）
             // v1.2 视频：active 随 showLyrics 暂停/续播 —— 歌词页覆盖时保留最后一帧不空耗，
             // 退出歌词页淡入淡出过渡期间视频已在原位，无闪白
@@ -510,7 +525,11 @@ fun MusicContent(
             ) {
                 if (!showLyrics) {
                     MusicTopBar(
-                        onSettings = { page = Page.SETTINGS }
+                        onSettings = {
+                            // 记住来源页，BACK 原路返回
+                            if (page != Page.SETTINGS) preSettingsPage = page
+                            page = Page.SETTINGS
+                        }
                     )
                 }
                 Box(Modifier.weight(1f)) {
@@ -708,7 +727,8 @@ fun MusicContent(
                         )
                         MusicBottomNavCompact(
                             page = page,
-                            onPageChange = { page = it }
+                            onPageChange = { page = it },
+                            anyFocus = anyFocus
                         )
                     } else {
                         PlayerBarMobile(
@@ -727,7 +747,8 @@ fun MusicContent(
                         )
                         MusicBottomNav(
                             page = page,
-                            onPageChange = { page = it }
+                            onPageChange = { page = it },
+                            anyFocus = anyFocus
                         )
                     }
                 }
@@ -781,10 +802,12 @@ private fun MusicTopBar(onSettings: () -> Unit) {
             contentDescription = "设置",
             tint = if (sch.isCustom) sch.textPrimary else Mc.textSecondary,
             modifier = Modifier
-                .size(20.dp)
-                .clip(RoundedCornerShape(6.dp))
+                // TV：图标与点击区放大，遥控 10 英尺外可辨
+                .size(if (TvCompat.isTv) 30.dp else 20.dp)
+                .clip(RoundedCornerShape(if (TvCompat.isTv) 10.dp else 6.dp))
+                .tvFocus(RoundedCornerShape(if (TvCompat.isTv) 10.dp else 6.dp), scaleUp = true)
                 .clickable(onClick = onSettings)
-                .padding(2.dp)
+                .padding(if (TvCompat.isTv) 4.dp else 2.dp)
         )
     }
 }
@@ -792,28 +815,42 @@ private fun MusicTopBar(onSettings: () -> Unit) {
 // ==================== 底部导航栏 ====================
 
 @Composable
-private fun MusicBottomNav(page: Page, onPageChange: (Page) -> Unit) {
+private fun MusicBottomNav(page: Page, onPageChange: (Page) -> Unit, anyFocus: Boolean = true) {
     // v1.2：自定义背景时底栏降透且颜色随明暗自适应（白玻璃/黑玻璃）
     val sch = LocalAdaptiveScheme.current
     HorizontalDivider(
         thickness = 0.5.dp,
         color = if (sch.isCustom) sch.divider else Mc.divider
     )
+    val items = listOf(
+        Page.SEARCH to Icons.Filled.Search,
+        Page.FAVORITES to Icons.Filled.Favorite,
+        Page.RECENT to Icons.Filled.History,
+        Page.LOCAL to Icons.Filled.LibraryMusic,
+        Page.DOWNLOADS to Icons.Filled.Download
+    )
+    // TV：每项一个焦点请求器 —— 焦点整体丢失（页面切换销毁焦点元素/关歌词页）时
+    // 把焦点还给当前选中项，保证遥控器永远有可操作的焦点目标
+    val itemFocuses = remember { items.associate { (p, _) -> p to FocusRequester() } }
+    if (TvCompat.isTv) {
+        LaunchedEffect(page, anyFocus) {
+            if (!anyFocus) {
+                kotlinx.coroutines.delay(150)
+                if (!anyFocus) runCatching { itemFocuses[page]?.requestFocus() }
+            }
+        }
+    }
     NavigationBar(
         containerColor = if (sch.isCustom) sch.glass else Color.White,
         tonalElevation = 0.dp
     ) {
-        val items = listOf(
-            Page.SEARCH to Icons.Filled.Search,
-            Page.FAVORITES to Icons.Filled.Favorite,
-            Page.RECENT to Icons.Filled.History,
-            Page.LOCAL to Icons.Filled.LibraryMusic,
-            Page.DOWNLOADS to Icons.Filled.Download
-        )
         for ((p, icon) in items) {
             NavigationBarItem(
                 selected = page == p,
                 onClick = { onPageChange(p) },
+                modifier = Modifier
+                    .focusRequester(itemFocuses[p]!!)
+                    .tvFocus(RoundedCornerShape(14.dp)),
                 icon = { Icon(icon, contentDescription = p.label, modifier = Modifier.size(22.dp)) },
                 label = { Text(p.label, fontSize = 10.sp, style = TextStyle(shadow = sch.shadow)) },
                 colors = NavigationBarItemDefaults.colors(
@@ -890,6 +927,8 @@ private fun PlayerBarMobile(
                     .weight(1f)
                     .height(32.dp)
                     .padding(horizontal = 6.dp)
+                    // TV：滑条聚焦时红色描边（聚焦后左右键增减进度）
+                    .tvFocus(RoundedCornerShape(16.dp))
             )
             Text(
                 text = fmtTime(engine.durationMs),
@@ -910,6 +949,7 @@ private fun PlayerBarMobile(
                 Modifier
                     .size(40.dp)
                     .clip(RoundedCornerShape(5.dp))
+                    .tvFocus(RoundedCornerShape(5.dp))
                     .clickable(onClick = onToggleLyrics)
             ) {
                 if (!coverOverride.isNullOrEmpty()) {
@@ -949,6 +989,7 @@ private fun PlayerBarMobile(
                 Modifier
                     .clip(RoundedCornerShape(5.dp))
                     .background(if (lyricsOpen) Mc.red else Color.Transparent)
+                    .tvFocus(RoundedCornerShape(5.dp))
                     .clickable(onClick = onToggleLyrics)
                     .padding(horizontal = 7.dp, vertical = 3.dp)
             ) {
@@ -974,6 +1015,7 @@ private fun PlayerBarMobile(
                 tint = if (sch.isCustom) sch.textSecondary else Mc.textSecondary,
                 modifier = Modifier
                     .size(17.dp)
+                    .tvFocus(CircleShape, scaleUp = true)
                     .clickable { engine.cycleMode() }
             )
             Spacer(Modifier.width(14.dp))
@@ -986,6 +1028,7 @@ private fun PlayerBarMobile(
                        else if (sch.isCustom) sch.textSecondary else Mc.textSecondary,
                 modifier = Modifier
                     .size(18.dp)
+                    .tvFocus(CircleShape, scaleUp = true)
                     .clickable(onClick = onToggleFav)
             )
         }
@@ -1006,6 +1049,7 @@ private fun PlayerBarMobile(
                         tint = if (sch.isCustom) sch.textPrimary else Mc.textPrimary,
                         modifier = Modifier
                             .size(24.dp)
+                            .tvFocus(CircleShape, scaleUp = true)
                             .clickable { engine.prev() }
                     )
                     Spacer(Modifier.width(14.dp))
@@ -1014,6 +1058,7 @@ private fun PlayerBarMobile(
                             .size(38.dp)
                             .clip(CircleShape)
                             .background(Mc.red)
+                            .tvFocus(CircleShape, accent = Color.White)
                             .clickable { engine.toggle() },
                         contentAlignment = Alignment.Center
                     ) {
@@ -1039,6 +1084,7 @@ private fun PlayerBarMobile(
                         tint = if (sch.isCustom) sch.textPrimary else Mc.textPrimary,
                         modifier = Modifier
                             .size(24.dp)
+                            .tvFocus(CircleShape, scaleUp = true)
                             .clickable { engine.next() }
                     )
                 }
@@ -1064,6 +1110,7 @@ private fun PlayerBarMobile(
                 modifier = Modifier
                     .width(112.dp)
                     .height(32.dp)
+                    .tvFocus(RoundedCornerShape(16.dp))
             )
         }
     }
@@ -1133,8 +1180,11 @@ private fun PlayerBarCompact(
                 ),
                 modifier = Modifier
                     .weight(1f)
-                    .height(20.dp)
+                    // TV：横屏紧凑条即 TV 播放条，滑条加高便于遥控看清焦点与拖动
+                    .height(if (TvCompat.isTv) 28.dp else 20.dp)
                     .padding(horizontal = 4.dp)
+                    // TV：滑条聚焦时红色描边（聚焦后左右键增减进度）
+                    .tvFocus(RoundedCornerShape(14.dp))
             )
             Text(
                 text = fmtTime(engine.durationMs),
@@ -1148,21 +1198,22 @@ private fun PlayerBarCompact(
         Row(
             Modifier
                 .fillMaxWidth()
-                .height(40.dp)
+                .height(if (TvCompat.isTv) 44.dp else 40.dp)
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // 封面（点击打开/关闭 3D 歌词秀）
             Box(
                 Modifier
-                    .size(30.dp)
+                    .size(if (TvCompat.isTv) 34.dp else 30.dp)
                     .clip(RoundedCornerShape(5.dp))
+                    .tvFocus(RoundedCornerShape(5.dp))
                     .clickable(onClick = onToggleLyrics)
             ) {
                 if (!coverOverride.isNullOrEmpty()) {
-                    BgImage(coverOverride, Modifier.size(30.dp))
+                    BgImage(coverOverride, Modifier.size(if (TvCompat.isTv) 34.dp else 30.dp))
                 } else {
-                    AsyncCover(song = song, modifier = Modifier.size(30.dp))
+                    AsyncCover(song = song, modifier = Modifier.size(if (TvCompat.isTv) 34.dp else 30.dp))
                 }
             }
             Spacer(Modifier.width(8.dp))
@@ -1193,6 +1244,7 @@ private fun PlayerBarCompact(
                 Modifier
                     .clip(RoundedCornerShape(5.dp))
                     .background(if (lyricsOpen) Mc.red else Color.Transparent)
+                    .tvFocus(RoundedCornerShape(5.dp))
                     .clickable(onClick = onToggleLyrics)
                     .padding(horizontal = 6.dp, vertical = 2.dp)
             ) {
@@ -1217,7 +1269,9 @@ private fun PlayerBarCompact(
                 contentDescription = "播放模式",
                 tint = if (sch.isCustom) sch.textSecondary else Mc.textSecondary,
                 modifier = Modifier
-                    .size(16.dp)
+                    // TV：图标放大，遥控 10 英尺外可辨
+                    .size(if (TvCompat.isTv) 24.dp else 16.dp)
+                    .tvFocus(CircleShape, scaleUp = true)
                     .clickable { engine.cycleMode() }
             )
             Spacer(Modifier.width(10.dp))
@@ -1229,7 +1283,8 @@ private fun PlayerBarCompact(
                 tint = if (isFav) Mc.red
                        else if (sch.isCustom) sch.textSecondary else Mc.textSecondary,
                 modifier = Modifier
-                    .size(16.dp)
+                    .size(if (TvCompat.isTv) 24.dp else 16.dp)
+                    .tvFocus(CircleShape, scaleUp = true)
                     .clickable(onClick = onToggleFav)
             )
             Spacer(Modifier.width(12.dp))
@@ -1240,15 +1295,17 @@ private fun PlayerBarCompact(
                 contentDescription = "上一首",
                 tint = if (sch.isCustom) sch.textPrimary else Mc.textPrimary,
                 modifier = Modifier
-                    .size(20.dp)
+                    .size(if (TvCompat.isTv) 28.dp else 20.dp)
+                    .tvFocus(CircleShape, scaleUp = true)
                     .clickable { engine.prev() }
             )
             Spacer(Modifier.width(10.dp))
             Box(
                 Modifier
-                    .size(30.dp)
+                    .size(if (TvCompat.isTv) 38.dp else 30.dp)
                     .clip(CircleShape)
                     .background(Mc.red)
+                    .tvFocus(CircleShape, accent = Color.White)
                     .clickable { engine.toggle() },
                 contentAlignment = Alignment.Center
             ) {
@@ -1273,7 +1330,8 @@ private fun PlayerBarCompact(
                 contentDescription = "下一首",
                 tint = if (sch.isCustom) sch.textPrimary else Mc.textPrimary,
                 modifier = Modifier
-                    .size(20.dp)
+                    .size(if (TvCompat.isTv) 28.dp else 20.dp)
+                    .tvFocus(CircleShape, scaleUp = true)
                     .clickable { engine.next() }
             )
         }
@@ -1288,29 +1346,43 @@ private fun PlayerBarCompact(
  * 无障碍与竖屏版一致。平板横屏下五枚图标均匀铺开，观感对齐平板应用。
  */
 @Composable
-private fun MusicBottomNavCompact(page: Page, onPageChange: (Page) -> Unit) {
+private fun MusicBottomNavCompact(page: Page, onPageChange: (Page) -> Unit, anyFocus: Boolean = true) {
     val sch = LocalAdaptiveScheme.current
     HorizontalDivider(
         thickness = 0.5.dp,
         color = if (sch.isCustom) sch.divider else Mc.divider
     )
+    val items = listOf(
+        Page.SEARCH to Icons.Filled.Search,
+        Page.FAVORITES to Icons.Filled.Favorite,
+        Page.RECENT to Icons.Filled.History,
+        Page.LOCAL to Icons.Filled.LibraryMusic,
+        Page.DOWNLOADS to Icons.Filled.Download
+    )
+    // TV：每项一个焦点请求器 —— 焦点整体丢失（页面切换销毁焦点元素/关歌词页）时
+    // 把焦点还给当前选中项，保证遥控器永远有可操作的焦点目标
+    val itemFocuses = remember { items.associate { (p, _) -> p to FocusRequester() } }
+    if (TvCompat.isTv) {
+        LaunchedEffect(page, anyFocus) {
+            if (!anyFocus) {
+                kotlinx.coroutines.delay(150)
+                if (!anyFocus) runCatching { itemFocuses[page]?.requestFocus() }
+            }
+        }
+    }
     NavigationBar(
-        modifier = Modifier.height(46.dp),
+        modifier = Modifier.height(if (TvCompat.isTv) 52.dp else 46.dp),
         containerColor = if (sch.isCustom) sch.glass else Color.White,
         tonalElevation = 0.dp
     ) {
-        val items = listOf(
-            Page.SEARCH to Icons.Filled.Search,
-            Page.FAVORITES to Icons.Filled.Favorite,
-            Page.RECENT to Icons.Filled.History,
-            Page.LOCAL to Icons.Filled.LibraryMusic,
-            Page.DOWNLOADS to Icons.Filled.Download
-        )
         for ((p, icon) in items) {
             NavigationBarItem(
                 selected = page == p,
                 onClick = { onPageChange(p) },
-                icon = { Icon(icon, contentDescription = p.label, modifier = Modifier.size(20.dp)) },
+                modifier = Modifier
+                    .focusRequester(itemFocuses[p]!!)
+                    .tvFocus(RoundedCornerShape(12.dp)),
+                icon = { Icon(icon, contentDescription = p.label, modifier = Modifier.size(if (TvCompat.isTv) 24.dp else 20.dp)) },
                 colors = NavigationBarItemDefaults.colors(
                     selectedIconColor = Mc.red,
                     // 自定义背景下未选中图标实心自适应色，保证可读

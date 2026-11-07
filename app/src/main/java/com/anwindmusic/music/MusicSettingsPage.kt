@@ -511,6 +511,7 @@ fun SettingsPage(
                         style = TextStyle(shadow = LocalAdaptiveScheme.current.shadow),
                         modifier = Modifier
                             .clip(RoundedCornerShape(6.dp))
+                            .tvFocus(RoundedCornerShape(6.dp))
                             .clickable(onClick = onPickFolder)
                             .padding(horizontal = 6.dp, vertical = 6.dp)
                     )
@@ -535,6 +536,7 @@ fun SettingsPage(
                     style = TextStyle(shadow = LocalAdaptiveScheme.current.shadow),
                     modifier = Modifier
                         .clip(RoundedCornerShape(6.dp))
+                        .tvFocus(RoundedCornerShape(6.dp))
                         .clickable(onClick = onRescan)
                         .padding(horizontal = 6.dp, vertical = 6.dp)
                 )
@@ -608,7 +610,7 @@ private fun Caption(text: String) {
     )
 }
 
-/** 模式选择 chips（横排，红底选中） */
+/** 模式选择 chips（横排，红底选中）；TV：聚焦描边（选中态白描边） */
 @Composable
 private fun ModeChipsRow(
     options: List<Pair<Int, String>>,
@@ -631,6 +633,7 @@ private fun ModeChipsRow(
                 modifier = Modifier
                     .clip(RoundedCornerShape(14.dp))
                     .background(if (isSel) Mc.red else chipBg)
+                    .tvFocus(RoundedCornerShape(14.dp), accent = if (isSel) Color.White else Mc.red)
                     .clickable { onSelect(value) }
                     .padding(horizontal = 14.dp, vertical = 6.dp)
             )
@@ -638,7 +641,7 @@ private fun ModeChipsRow(
     }
 }
 
-/** 纯色色板（圆形色块，选中描边） */
+/** 纯色色板（圆形色块，选中描边）；TV：色块放大 + 聚焦红环 */
 @Composable
 private fun ColorSwatchRow(colors: List<Color>, selected: Int, onSelect: (Int) -> Unit) {
     Row(
@@ -650,7 +653,7 @@ private fun ColorSwatchRow(colors: List<Color>, selected: Int, onSelect: (Int) -
             val isSel = c.toArgb() == selected
             Box(
                 Modifier
-                    .size(26.dp)
+                    .size(if (TvCompat.isTv) 30.dp else 26.dp)
                     .clip(CircleShape)
                     .background(c)
                     .border(
@@ -658,13 +661,14 @@ private fun ColorSwatchRow(colors: List<Color>, selected: Int, onSelect: (Int) -
                         color = if (isSel) Mc.red else borderColor,
                         shape = CircleShape
                     )
+                    .tvFocus(CircleShape, scaleUp = true)
                     .clickable { onSelect(c.toArgb()) }
             )
         }
     }
 }
 
-/** 渐变预设色板（胶囊色块，选中描边） */
+/** 渐变预设色板（胶囊色块，选中描边）；TV：聚焦红环 */
 @Composable
 private fun GradientSwatchRow(
     gradients: List<List<Color>>,
@@ -688,6 +692,7 @@ private fun GradientSwatchRow(
                         color = if (isSel) Mc.red else borderColor,
                         shape = RoundedCornerShape(13.dp)
                     )
+                    .tvFocus(RoundedCornerShape(13.dp), scaleUp = true)
                     .clickable { onSelect(i) }
             )
         }
@@ -722,13 +727,19 @@ private fun ImagePickRow(
             modifier = Modifier
                 .weight(1f)
                 .clip(RoundedCornerShape(6.dp))
+                .tvFocus(RoundedCornerShape(6.dp))
                 .clickable(onClick = onPick)
                 .padding(vertical = 6.dp),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
         if (picked) {
-            IconButton(onClick = onClear, modifier = Modifier.size(24.dp)) {
+            IconButton(
+                onClick = onClear,
+                modifier = Modifier
+                    .size(24.dp)
+                    .tvFocus(CircleShape, scaleUp = true)
+            ) {
                 Icon(
                     Icons.Filled.Close,
                     contentDescription = "清除",
@@ -768,13 +779,19 @@ private fun VideoPickRow(
             modifier = Modifier
                 .weight(1f)
                 .clip(RoundedCornerShape(6.dp))
+                .tvFocus(RoundedCornerShape(6.dp))
                 .clickable(onClick = onPick)
                 .padding(vertical = 6.dp),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
         if (picked) {
-            IconButton(onClick = onClear, modifier = Modifier.size(24.dp)) {
+            IconButton(
+                onClick = onClear,
+                modifier = Modifier
+                    .size(24.dp)
+                    .tvFocus(CircleShape, scaleUp = true)
+            ) {
                 Icon(
                     Icons.Filled.Close,
                     contentDescription = "清除",
@@ -834,6 +851,8 @@ private fun SettingSlider(
             modifier = Modifier
                 .weight(1f)
                 .height(26.dp)
+                // TV：滑条聚焦时红色描边（聚焦后左右键按步进增减）
+                .tvFocus(RoundedCornerShape(13.dp))
         )
         Text(
             text = display,
@@ -867,6 +886,7 @@ private fun SettingSwitch(
             Switch(
                 checked = checked,
                 onCheckedChange = onChange,
+                modifier = Modifier.tvFocus(RoundedCornerShape(16.dp)),
                 colors = SwitchDefaults.colors(
                     checkedThumbColor = Color.White,
                     checkedTrackColor = Mc.red,
@@ -886,7 +906,7 @@ private fun SettingSwitch(
     }
 }
 
-/** 词源单选行（v1.2 文字与描边自适应） */
+/** 词源单选行（v1.2 文字与描边自适应）；TV：整行聚焦描边 */
 @Composable
 private fun EngineRadioRow(label: String, selected: Boolean, onClick: () -> Unit) {
     val sch = LocalAdaptiveScheme.current
@@ -894,6 +914,7 @@ private fun EngineRadioRow(label: String, selected: Boolean, onClick: () -> Unit
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
+            .tvFocus(RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
             .padding(vertical = 7.dp)
     ) {
@@ -948,7 +969,8 @@ private fun DirRow(path: String, onRemove: () -> Unit) {
             contentDescription = "移除目录",
             tint = sch.textTertiary,
             modifier = Modifier
-                .size(14.dp)
+                .size(if (TvCompat.isTv) 22.dp else 14.dp)
+                .tvFocus(CircleShape, scaleUp = true)
                 .clickable(onClick = onRemove)
         )
     }
@@ -986,13 +1008,18 @@ private fun ManualDirInput(onAdd: (String) -> Unit) {
             modifier = Modifier
                 .weight(1f)
                 .height(46.dp)
+                // TV：输入框聚焦时红色描边
+                .tvFocus(RoundedCornerShape(8.dp))
         )
-        IconButton(onClick = {
-            if (text.isNotBlank()) {
-                onAdd(text)
-                text = ""
-            }
-        }) {
+        IconButton(
+            onClick = {
+                if (text.isNotBlank()) {
+                    onAdd(text)
+                    text = ""
+                }
+            },
+            modifier = Modifier.tvFocus(CircleShape, scaleUp = true)
+        ) {
             Icon(Icons.Filled.Add, contentDescription = "添加目录", tint = Mc.red)
         }
     }

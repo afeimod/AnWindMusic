@@ -68,6 +68,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -286,7 +288,10 @@ fun Lyrics3DPage(
                     .padding(start = 10.dp, end = 14.dp, top = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onClose) {
+                IconButton(
+                    onClick = onClose,
+                    modifier = Modifier.tvFocus(CircleShape, scaleUp = true)
+                ) {
                     Icon(
                         Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "返回",
@@ -327,7 +332,10 @@ fun Lyrics3DPage(
                     )
                 }
                 Spacer(Modifier.width(8.dp))
-                IconButton(onClick = onDownloadLyric) {
+                IconButton(
+                    onClick = onDownloadLyric,
+                    modifier = Modifier.tvFocus(CircleShape, scaleUp = true)
+                ) {
                     Icon(
                         Icons.Filled.Download,
                         contentDescription = "下载歌词",
@@ -336,7 +344,10 @@ fun Lyrics3DPage(
                     )
                 }
                 // v2.21.3：全屏/退出全屏（真全屏隐藏标题栏与任务栏，返回键恢复）
-                IconButton(onClick = onToggleFullscreen) {
+                IconButton(
+                    onClick = onToggleFullscreen,
+                    modifier = Modifier.tvFocus(CircleShape, scaleUp = true)
+                ) {
                     Icon(
                         if (isTrueFullscreen) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen,
                         contentDescription = if (isTrueFullscreen) "退出全屏" else "全屏",
@@ -578,6 +589,8 @@ private fun CoverWithDisc(
                 .graphicsLayer { scaleX = fit; scaleY = fit }
                 // 整体视觉重心居中：嵌合体外探 89dp，回拉约半探出量
                 .offset(x = (-44).dp * fit)
+                // TV：聚焦描边（遥控选中后确认切换歌词秀样式）
+                .tvFocus(RoundedCornerShape(12.dp))
                 .clickable(onClick = onSwitchStyle)
         ) {
             // 光盘在下层：offset 95dp = 封面半宽，即盘心压在封面右边缘
@@ -1000,7 +1013,8 @@ private fun VinylDiscUnit(
             .times(0.86f)
             .coerceIn(96f, 260f)
             .dp
-        Box(Modifier.size(discSize).clickable(onClick = onToggleStyle)) {
+        // TV：聚焦描边（遥控选中后确认切换回 3D 歌词墙）
+        Box(Modifier.size(discSize).tvFocus(CircleShape).clickable(onClick = onToggleStyle)) {
             VinylDiscCanvas(
                 angle = spin.value,
                 artwork = artwork.value,
@@ -1306,6 +1320,8 @@ private fun LyricLineItem(
         horizontalAlignment = if (singleLineScroll) Alignment.End else Alignment.CenterHorizontally,
         modifier = Modifier
             .fillMaxWidth()
+            // TV：歌词行聚焦描边 —— 遥控上下键在歌词墙中移动、确认即跳转到该行
+            .tvFocus(RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 9.dp)
             .graphicsLayer {
@@ -1595,6 +1611,15 @@ private fun CompactControls(
     var userSeeking by remember { mutableStateOf(false) }
     var seekPos by remember { mutableStateOf(0f) }
     val maxPos = durationMs.coerceAtLeast(1L).toFloat()
+    // TV：打开歌词页时自动聚焦播放/暂停键 —— 遥控一上手就有明确焦点
+    val tv = TvCompat.isTv
+    val playFocus = remember { FocusRequester() }
+    if (tv) {
+        LaunchedEffect(Unit) {
+            kotlinx.coroutines.delay(80)
+            runCatching { playFocus.requestFocus() }
+        }
+    }
 
     Column(
         Modifier
@@ -1612,6 +1637,7 @@ private fun CompactControls(
                 Modifier
                     .size(26.dp)
                     .clip(CircleShape)
+                    .tvFocus(CircleShape, scaleUp = true)
                     .clickable(onClick = onCycleMode),
                 contentAlignment = Alignment.Center
             ) {
@@ -1631,6 +1657,7 @@ private fun CompactControls(
                 Modifier
                     .size(32.dp)
                     .clip(CircleShape)
+                    .tvFocus(CircleShape, scaleUp = true)
                     .clickable(onClick = onPrev),
                 contentAlignment = Alignment.Center
             ) {
@@ -1647,6 +1674,8 @@ private fun CompactControls(
                     .size(40.dp)
                     .clip(CircleShape)
                     .background(Color.White.copy(alpha = 0.12f))
+                    .tvFocus(CircleShape, scaleUp = true)
+                    .focusRequester(playFocus)
                     .clickable(onClick = onToggle),
                 contentAlignment = Alignment.Center
             ) {
@@ -1670,6 +1699,7 @@ private fun CompactControls(
                 Modifier
                     .size(32.dp)
                     .clip(CircleShape)
+                    .tvFocus(CircleShape, scaleUp = true)
                     .clickable(onClick = onNext),
                 contentAlignment = Alignment.Center
             ) {
@@ -1712,6 +1742,8 @@ private fun CompactControls(
                     .weight(1f)
                     .height(24.dp)
                     .padding(horizontal = 6.dp)
+                    // TV：进度条聚焦时白色描边（聚焦后左右键增减进度）
+                    .tvFocus(RoundedCornerShape(12.dp), accent = Color.White)
             )
             Text(
                 text = fmtTime(durationMs),

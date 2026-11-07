@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -54,6 +55,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -65,6 +69,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
@@ -488,7 +493,8 @@ fun EqBars(
 
 // ==================== 搜索框 ====================
 
-/** 顶部搜索框：灰底圆角 + 放大镜 + 可清空，回车/搜索键触发 */
+/** 顶部搜索框：灰底圆角 + 放大镜 + 可清空，回车/搜索键触发
+ *  TV：应用启动时自动聚焦一次（可直接用遥控输入），聚焦时自动弹出系统输入法 */
 @Composable
 fun McSearchField(
     query: String,
@@ -500,11 +506,21 @@ fun McSearchField(
     // v1.2：自定义背景激活时搜索框用「小表面玻璃」并随背景明暗自适应，文字叠加光晕
     val sch = LocalAdaptiveScheme.current
     val fieldBg = if (sch.isCustom) sch.glassField else Mc.searchFieldBg
+    // TV：搜索框焦点管理 —— 启动时自动聚焦一次 + 聚焦即弹输入法
+    val tv = TvCompat.isTv
+    val textFieldFocus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    if (tv && !TvCompat.initialSearchFocused) {
+        TvCompat.initialSearchFocused = true
+        LaunchedEffect(Unit) { runCatching { textFieldFocus.requestFocus() } }
+    }
     Row(
         modifier = modifier
             .height(34.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(fieldBg)
+            // TV：搜索框聚焦（内部文本框获焦）时整框红色描边
+            .tvFocus(RoundedCornerShape(8.dp))
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -537,11 +553,22 @@ fun McSearchField(
                 cursorBrush = SolidColor(Mc.red),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { onSearch(query) }),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(textFieldFocus)
+                    // TV：D-pad 聚焦到搜索框时自动弹出系统输入法（遥控可直接输入搜索词）
+                    .onFocusChanged {
+                        if (tv && it.isFocused) keyboard?.show()
+                    }
             )
         }
         if (query.isNotEmpty()) {
-            IconButton(onClick = { onQueryChange("") }, modifier = Modifier.size(20.dp)) {
+            IconButton(
+                onClick = { onQueryChange("") },
+                modifier = Modifier
+                    .size(20.dp)
+                    .tvFocus(CircleShape, scaleUp = true)
+            ) {
                 Icon(
                     imageVector = Icons.Filled.Close,
                     contentDescription = "清空",

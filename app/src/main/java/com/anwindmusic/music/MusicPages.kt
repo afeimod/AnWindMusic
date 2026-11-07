@@ -8,6 +8,7 @@ import android.provider.MediaStore
 import java.io.File
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -124,6 +125,8 @@ fun SearchPage(
                                 else -> Mc.hover
                             }
                         )
+                        // TV：音源芯片聚焦描边（选中态用白描边避免红底叠红边）
+                        .tvFocus(RoundedCornerShape(14.dp), accent = if (selected) Color.White else Mc.red)
                         .clickable { onSourceChange(src) }
                         .padding(horizontal = 14.dp, vertical = 5.dp)
                 ) {
@@ -175,6 +178,7 @@ fun SearchPage(
                                     Modifier
                                         .clip(RoundedCornerShape(14.dp))
                                         .background(if (sch.isCustom) sch.glassField else Mc.hover)
+                                        .tvFocus(RoundedCornerShape(14.dp))
                                         .clickable {
                                             onQueryChange(kw)
                                             onSearch(kw)
@@ -247,6 +251,7 @@ fun SearchPage(
                         Box(
                             Modifier
                                 .fillMaxWidth()
+                                .tvFocus(RoundedCornerShape(10.dp))
                                 .clickable(onClick = onLoadMore)
                                 .padding(vertical = 14.dp),
                             contentAlignment = Alignment.Center
@@ -455,7 +460,8 @@ fun DownloadsPage(items: List<DownloadItem>, saveDir: String, onRetry: (Download
                                     contentDescription = "重试",
                                     tint = sch.textSecondary,
                                     modifier = Modifier
-                                        .size(18.dp)
+                                        .size(if (TvCompat.isTv) 24.dp else 18.dp)
+                                        .tvFocus(CircleShape, scaleUp = true)
                                         .clickable { onRetry(item) }
                                 )
                             } else {
@@ -527,6 +533,7 @@ private fun PageHeader(
                 Modifier
                     .clip(RoundedCornerShape(18.dp))
                     .background(if (sch.isCustom) sch.glassField else Mc.hover)
+                    .tvFocus(RoundedCornerShape(18.dp))
                     .clickable(onClick = onSecondary)
                     .padding(horizontal = 14.dp, vertical = 7.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -552,6 +559,8 @@ private fun PageHeader(
             Modifier
                 .clip(RoundedCornerShape(18.dp))
                 .background(Mc.red)
+                // TV：红底按钮聚焦用白描边，10 英尺外也看得清
+                .tvFocus(RoundedCornerShape(18.dp), accent = Color.White)
                 .clickable(onClick = onAction)
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -591,6 +600,8 @@ private fun SongRow(
             .fillMaxWidth()
             .height(58.dp)
             .background(if (isCurrent) Mc.selectedRow else Color.Transparent)
+            // TV：整行聚焦红色描边 —— 遥控上下键在列表中移动的视觉主体
+            .tvFocus(RoundedCornerShape(8.dp))
             .clickable(onClick = onPlay)
             .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -645,7 +656,8 @@ private fun SongRow(
             tint = if (isFav) Mc.red
                    else if (sch.isCustom) sch.textTertiary else Color(0xFFC9C9CF),
             modifier = Modifier
-                .size(15.dp)
+                .size(if (TvCompat.isTv) 22.dp else 15.dp)
+                .tvFocus(CircleShape, scaleUp = true)
                 .clickable(onClick = onToggleFav)
         )
         Spacer(Modifier.width(12.dp))
@@ -656,6 +668,7 @@ private fun SongRow(
                     .clip(RoundedCornerShape(6.dp))
                     // v1.2：芯片随明暗自适应（更透+实心文字）
                     .background(if (sch.isCustom) sch.glassField else Mc.hover)
+                    .tvFocus(RoundedCornerShape(6.dp))
                     .clickable(onClick = onDownloadLyric)
                     .padding(horizontal = 7.dp, vertical = 3.dp)
             ) {
@@ -683,7 +696,8 @@ private fun SongRow(
                         contentDescription = "下载",
                         tint = if (sch.isCustom) sch.textTertiary else Color(0xFFC9C9CF),
                         modifier = Modifier
-                            .size(15.dp)
+                            .size(if (TvCompat.isTv) 22.dp else 15.dp)
+                            .tvFocus(CircleShape, scaleUp = true)
                             .clickable(onClick = onDownload)
                     )
             }
