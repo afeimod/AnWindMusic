@@ -28,10 +28,11 @@ import kotlinx.coroutines.launch
  * （WindowHost 只渲染可见窗口）→ 组合销毁 → engine.dispose() 停播 +
  * 歌词服务被拉停。
  *
- * 现引擎升级为进程级单例：最小化只销毁窗口 UI，播放、进度记忆与
- * 桌面歌词总线（DesktopLyricBus）由引擎在后台 scope 继续推进；
- * 显式关闭最后一个播放器窗口时才经 [shutdown] 停止（保留
- * v2.21.2 语义“关闭播放器即停止音乐与桌面歌词”）。
+ * 现引擎升级为进程级单例：最小化只销毁窗口 UI，播放与进度记忆
+ * 由引擎在后台 scope 继续推进；显式关闭最后一个播放器窗口时才经
+ * [shutdown] 停止。
+ * v1.4：移除桌面歌词悬浮窗（SYSTEM_ALERT_WINDOW 是国内手机/电视
+ * 安全检测拦截安装的主因），桌面歌词总线随之删除。
  */
 object MusicEngineHolder {
 
@@ -61,8 +62,7 @@ object MusicEngineHolder {
  *   （与项目中媒体播放器 v2.10 的 playGen 方案一致）
  * - 播放队列 + 三种模式：顺序播放 / 单曲循环 / 随机播放
  * - 500ms 步进的进度上报（Compose State，UI 直接读取）
- * - v2.22.3（fix9.11）：歌词拉取与 DesktopLyricBus 推进收编到引擎 ——
- *   播放器窗口最小化（组合销毁）后歌词照常推进、桌面歌词悬浮窗不中断
+ * - v2.22.3：歌词拉取收编到引擎（窗口最小化后歌词照常推进）
  */
 class MusicEngine(context: Context) {
 
@@ -229,8 +229,6 @@ class MusicEngine(context: Context) {
                 isPlaying = false
                 ticker?.cancel()
                 saveSession(force = true)
-                // v2.22.3：暂停时同步总线（悬浮窗 KTV 冻结在当前进度）
-                pushLyricBus()
             } else {
                 player.start()
                 isPlaying = true
@@ -247,8 +245,6 @@ class MusicEngine(context: Context) {
             positionMs = safe
         }
         saveSession()
-        // v2.22.3：跳转后同步总线（悬浮窗跟随进度/歌词行）
-        pushLyricBus()
     }
 
     /** 上一曲（用户点击，循环队列） */
@@ -293,10 +289,9 @@ class MusicEngine(context: Context) {
         playError = null
     }
 
-    // ==================== 歌词拉取与桌面歌词总线（v2.22.3/fix9.11） ====================
+    // ==================== 歌词拉取（v2.22.3/fix9.11） ====================
     // 旧实现由播放器窗口组合内的 LaunchedEffect 驱动：最小化即组合销毁，
-    // 总线停止更新 → 桌面歌词冻结/关闭。现收编到引擎（独立 scope），
-    // 窗口是否存在不再影响歌词与悬浮窗。
+    // 歌词拉取随窗口中断。现收编到引擎（独立 scope），窗口是否存在不影响。
 
     /**
      * 拉取当前曲歌词：缓存优先；未命中走深度下载兑底（扩展关键词 +
@@ -322,7 +317,6 @@ class MusicEngine(context: Context) {
             if (myGen != lyricGen) return@launch
             lyricDoc = doc
             lyricLoading = false
-            pushLyricBus()
         }
     }
 
@@ -334,38 +328,6 @@ class MusicEngine(context: Context) {
             return
         }
         refreshLyrics(force = false)
-    }
-
-    /**
-     * 播放状态 → 桌面歌词总线：歌词行/KTV 进度/歌名/播放态一次写入，
-     * 悬浮窗服务 200ms 轮询本总线。引擎在播放 ticker 中周期调用，
-     * 最小化/无窗口后依然推进。
-     */
-    fun pushLyricBus() {
-        val doc = lyricDoc
-        val song = currentSong
-        DesktopLyricBus.songName = song?.name.orEmpty()
-        DesktopLyricBus.playing = isPlaying
-        if (doc == null || song == null) {
-            DesktopLyricBus.lines = emptyList()
-            DesktopLyricBus.index = -1
-            DesktopLyricBus.lineStartMs = 0L
-            DesktopLyricBus.lineEndMs = 0L
-        } else {
-            DesktopLyricBus.lines = doc.lines
-            val idx = doc.indexAt(positionMs)
-            DesktopLyricBus.index = idx
-            if (idx >= 0) {
-                DesktopLyricBus.lineStartMs = doc.lines.getOrNull(idx)?.timeMs ?: 0L
-                DesktopLyricBus.lineEndMs = doc.lines.getOrNull(idx + 1)?.timeMs
-                    ?: durationMs
-            } else {
-                DesktopLyricBus.lineStartMs = 0L
-                DesktopLyricBus.lineEndMs = 0L
-            }
-        }
-        DesktopLyricBus.positionMs = positionMs
-        DesktopLyricBus.posUpdatedAt = SystemClock.uptimeMillis()
     }
 
     // ==================== 内部实现 ====================
@@ -384,8 +346,7 @@ class MusicEngine(context: Context) {
         ticker?.cancel()
         // v2.21.2：切歌即记录新会话（进度从当前起点算起）
         saveSession(force = true)
-        // v2.22.3：切歌即刷新总线（新歌名/重置歌词行）+ 后台拉取新曲歌词
-        pushLyricBus()
+        // v2.22.3：后台拉取新曲歌词
         refreshLyricsForCurrent()
 
         scope.launch {
@@ -394,10 +355,13 @@ class MusicEngine(context: Context) {
                 song.isLocal -> song.localUri
                 song.downloadedPath != null && java.io.File(song.downloadedPath).isFile ->
                     Uri.fromFile(java.io.File(song.downloadedPath)).toString()
-                // v2.24：简音 Meting 音源 → 解析代理直链（302 跟随）；其余在线歌走酷我解析
-                else -> song.metingServer
-                    ?.let { MetingMusicApi.resolvePlayUrl(it, song.id).getOrNull() }
-                    ?: KuwoMusicApi.getPlayUrl(song.id).getOrNull()
+                else -> {
+                    // v1.4 统一策略：聚合歌 Meting 直链优先，失败按「歌手 歌名」搜酷我兜底
+                    // （修复旧代码把网易云/酷狗 ID 当酷我 ID 直解必然失败 → 电视上聚合歌无法播放）
+                    KuwoMusicApi.resolvePlayUrlSmart(
+                        song.metingServer, song.id, song.artist, song.name
+                    ).getOrNull()
+                }
             }
             if (myGen != gen) return@launch
             if (source.isNullOrEmpty()) {
@@ -445,8 +409,6 @@ class MusicEngine(context: Context) {
                 positionMs = runCatching { player.currentPosition.toLong() }.getOrDefault(positionMs)
                 // v2.21.2：播放中定期记忆进度（saveSession 内部节流）
                 saveSession()
-                // v2.22.3：播放中周期推进桌面歌词总线（引擎级，不依赖窗口）
-                pushLyricBus()
                 delay(300)
             }
         }

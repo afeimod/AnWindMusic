@@ -1,14 +1,12 @@
 package com.anwindmusic
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.DocumentsContract
-import android.provider.Settings
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -24,10 +22,10 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
+import com.anwindmusic.music.MediaSaver
 import com.anwindmusic.music.MusicContent
 import com.anwindmusic.music.PickBus
 import com.anwindmusic.music.TvCompat
-import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -35,7 +33,9 @@ import kotlinx.coroutines.withContext
 /**
  * AnWindMusic —— AnWind 云音乐独立版入口 Activity：
  * - 承载 MusicContent（纯 Compose 手机布局）
- * - 系统文件管理器选图/选视频（DocumentsUI 分类界面）/ 文件夹选择器（结果经 PickBus 回传播放器）
+ * - 系统文件管理器选图/选视频（DocumentsUI）/ 文件夹选择器（结果经 PickBus 回传播放器）
+ * - v1.4：SAF 选择器拉起失败（电视普遍无 DocumentsUI）时返回 false，
+ *   由 Compose 侧内置选择器兑底
  * - 运行时权限：音频读取（本地扫描）+ 通知（Android 13+）
  * - 默认全屏 edge-to-edge：内容延伸到状态栏/导航栏后面，占用刘海区域；
  *   交互控件经 insets 避让，不被系统栏/虚拟按键遮挡
@@ -49,8 +49,9 @@ class MainActivity : ComponentActivity() {
     /** 沉浸式全屏状态（歌词页用；manifest 已锁 configChanges 避免旋转重建丢失） */
     private var fullscreen by mutableStateOf(false)
 
-    /** 系统文件管理器选图（DocumentsUI，ACTION_OPEN_DOCUMENT）：
-     *  带最近/图片/视频/相册等分类侧栏，直观选图；结果复制到私有目录无授权过期问题 */
+    /** 系统文件管理器选图（ACTION_OPEN_DOCUMENT）：
+     *  带最近/图片/视频/相册等分类侧栏；结果复制到私有目录无授权过期问题。
+     *  v1.4：返回是否拉起成功（电视无 DocumentsUI 时 false → Compose 内置选择器兑底） */
     private val imagePicker =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             val kind = pendingPickKind
@@ -58,7 +59,7 @@ class MainActivity : ComponentActivity() {
             if (uri == null || kind == null) return@registerForActivityResult
             lifecycleScope.launch {
                 // 复制到应用私有目录：path 形式存储，无 URI 授权过期问题
-                val path = withContext(Dispatchers.IO) { copyUriToInternal(uri, kind) }
+                val path = withContext(Dispatchers.IO) { MediaSaver.copyMediaToInternal(this@MainActivity, uri, kind) }
                 if (path != null) {
                     PickBus.publish(path)
                 } else {
@@ -75,7 +76,7 @@ class MainActivity : ComponentActivity() {
             pendingPickKind = null
             if (uri == null || kind == null) return@registerForActivityResult
             lifecycleScope.launch {
-                val path = withContext(Dispatchers.IO) { copyUriToInternal(uri, kind) }
+                val path = withContext(Dispatchers.IO) { MediaSaver.copyMediaToInternal(this@MainActivity, uri, kind) }
                 if (path != null) {
                     PickBus.publish(path)
                 } else {
@@ -116,40 +117,32 @@ class MainActivity : ComponentActivity() {
             ) {
                 MusicContent(
                     onPickImage = { kind ->
+                        // v1.4：返回 SAF 是否拉起成功；电视直接不尝试（无 DocumentsUI）
+                        if (TvCompat.isTv) return@MusicContent false
                         pendingPickKind = kind
                         runCatching {
                             imagePicker.launch(arrayOf("image/*"))
-                        }.onFailure {
-                            Toast.makeText(this, "无法打开图片选择器", Toast.LENGTH_SHORT).show()
-                            pendingPickKind = null
+                        }.isSuccess.also {
+                            if (!it) pendingPickKind = null
                         }
                     },
                     onPickVideo = { kind ->
+                        if (TvCompat.isTv) return@MusicContent false
                         pendingPickKind = kind
                         runCatching {
                             videoPicker.launch(arrayOf("video/*"))
-                        }.onFailure {
-                            Toast.makeText(this, "无法打开视频选择器", Toast.LENGTH_SHORT).show()
-                            pendingPickKind = null
+                        }.isSuccess.also {
+                            if (!it) pendingPickKind = null
                         }
                     },
                     onPickFolder = {
-                        // 目录扫描走 File API：Android 11+ 需「所有文件访问」权限
-                        if (Build.VERSION.SDK_INT >= 30 && !Environment.isExternalStorageManager()) {
-                            Toast.makeText(
-                                this,
-                                "扫描指定目录需要「所有文件访问」权限：请在下一页授权后重新点击选择",
-                                Toast.LENGTH_LONG
-                            ).show()
-                            guideAllFilesAccess()
-                        } else {
-                            pendingPickKind = "folder"
-                            runCatching {
-                                folderPicker.launch(null)
-                            }.onFailure {
-                                Toast.makeText(this, "无法打开文件夹选择器", Toast.LENGTH_SHORT).show()
-                                pendingPickKind = null
-                            }
+                        // v1.4：目录选择 SAF 免权限（无需「所有文件访问」）；
+                        // 电视无文件选择器时返回 false，由 Compose 侧提示手动输入
+                        pendingPickKind = "folder"
+                        runCatching {
+                            folderPicker.launch(null)
+                        }.isSuccess.also {
+                            if (!it) pendingPickKind = null
                         }
                     },
                     isFullscreen = fullscreen,
@@ -218,48 +211,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** 引导到「所有文件访问」授权页（Android 11+，指定目录扫描/公共音乐下载目录用） */
-    private fun guideAllFilesAccess() {
-        runCatching {
-            startActivity(
-                Intent(
-                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                    Uri.parse("package:$packageName")
-                )
-            )
-        }.onFailure {
-            runCatching { startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) }
-                .onFailure {
-                    Toast.makeText(this, "请在系统设置中授予「所有文件访问」权限", Toast.LENGTH_LONG).show()
-                }
-        }
-    }
-
     // ==================== SAF 结果处理 ====================
-
-    /**
-     * 把选中的图片/视频复制到应用私有目录并返回绝对路径。
-     * 相比直接存 content:// URI：无授权过期/重启失效问题，BgImage/BgVideo 直接按文件路径读取。
-     */
-    private fun copyUriToInternal(uri: Uri, kind: String): String? = runCatching {
-        val ext = when (contentResolver.getType(uri)) {
-            "image/png" -> "png"
-            "image/webp" -> "webp"
-            "image/gif" -> "gif"
-            "video/mp4" -> "mp4"
-            "video/webm" -> "webm"
-            "video/x-matroska" -> "mkv"
-            "video/quicktime" -> "mov"
-            "video/3gpp" -> "3gp"
-            else -> if (kind.endsWith("Video")) "mp4" else "jpg"
-        }
-        val dir = File(filesDir, "picked_images").apply { mkdirs() }
-        val out = File(dir, "${kind}_${System.currentTimeMillis()}.$ext")
-        contentResolver.openInputStream(uri)?.use { input ->
-            out.outputStream().use { output -> input.copyTo(output) }
-        } ?: return null
-        out.absolutePath
-    }.getOrNull()
 
     /**
      * SAF tree URI → 真实文件路径（仅手机主存储可换算）：

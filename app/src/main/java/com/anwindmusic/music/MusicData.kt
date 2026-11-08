@@ -205,10 +205,11 @@ object LrcParser {
  * - 歌词秀：背景（封面模糊/纯色/渐变/自定义图片/自定义视频）、3D 倾斜强度与上限、歌词墙视角、
  *   左右字体差、高亮颜色、非高亮歌词颜色、KTV 渐进样式、当前行字号、行切换动画、高亮发光、翻译显示、
  *   自定义封面/光盘图片（v2.21）
- * - 桌面歌词（v2.21）：悬浮窗开关、两行/全屏双模式、字体颜色、背景不透明度、字号
  * - 主页：背景（默认/纯色/渐变/自定义图片/自定义视频）与图片压暗
- * - 本地扫描：全库扫描 / 仅扫描指定目录（目录为绝对路径，依赖“所有文件访问”权限）
+ * - 本地扫描：全库扫描 / 仅扫描指定目录（v1.4 起走 MediaStore 路径过滤，无需「所有文件访问」）
  * - 词源引擎：智能回退 / 指定优先词源（酷我、网易云、QQ 音乐、LRCLIB）
+ *
+ * v1.4：移除桌面歌词相关字段（悬浮窗功能整体下线，过安全检测）
  */
 data class MusicSettings(
     // ---- 歌词秀背景 ----
@@ -241,21 +242,6 @@ data class MusicSettings(
     val lyricFontSize: Int = 22,
     /** 非高亮歌词颜色（v1.2 新增 ARGB）：默认非当前行/翻译行/KTV 未唱部分的字色 */
     val lyricSubColor: Int = 0xFFD5D5DE.toInt(),
-    // ---- 桌面歌词（v2.21 新增） ----
-    /** 桌面歌词总开关（需「显示在应用上层/其他应用上层」权限） */
-    val desktopLyricOn: Boolean = false,
-    /** 桌面歌词模式：false = 两行模式（对照参考图4），true = 桌面全屏歌词横幅 */
-    val desktopLyricFullscreen: Boolean = false,
-    /** 桌面歌词字体颜色（ARGB） */
-    val desktopLyricColor: Int = 0xFFFFFFFF.toInt(),
-    /** 桌面歌词背景不透明度 0..1（0 为全透明仅剩描边字；v2.21.1 默认全透明） */
-    val desktopLyricBgAlpha: Float = 0f,
-    /** 桌面歌词字号（sp），两行模式两行同字号；全屏模式非当前行按 0.7 倍缩小 */
-    val desktopLyricSize: Float = 22f,
-    /** 桌面歌词 KTV 逐字变色（v2.21.1 新增）：当前行按播放进度从左向右扫色 */
-    val desktopLyricKtv: Boolean = true,
-    /** 桌面全屏歌词显示行数（v2.21.2 起上限 15 行，默认 4 行，围绕当前行取词） */
-    val desktopLyricLines: Int = 4,
     /** 歌词秀自定义封面图片（content:// 或绝对路径；空 = 使用歌曲专辑封面，v2.21） */
     val coverImage: String? = null,
     /** 歌词秀自定义光盘盘面图片（空 = 与封面同图，v2.21） */
@@ -345,22 +331,6 @@ data class MusicSettings(
 }
 
 // ==================== 本地持久化 ====================
-
-/**
- * 桌面歌词悬浮窗锁定状态与位置记忆（v2.21.3）。
- * 独立于 [MusicSettings] 存储于 desklyric.json：位置由悬浮窗服务在拖动结束/锁定时写入，
- * 设置页只写 locked 开关 —— 避免两处保存互相覆盖。
- * 坐标为 px；-1 = 未记录（使用内建默认位置）。
- */
-data class LyricOverlayState(
-    val locked: Boolean = false,
-    /** 两行模式窗口 y（窗口通栏全屏宽，仅垂直拖动） */
-    val pairY: Int = -1,
-    /** 全屏模式横幅 x 偏移（CENTER 重力下的拖动偏移） */
-    val fsX: Int = -1,
-    /** 全屏模式横幅 y 偏移 */
-    val fsY: Int = -1
-)
 
 /**
  * 收藏 / 最近播放 / 播放模式持久化。
@@ -512,17 +482,6 @@ class MusicStore(private val context: Context) {
             ktvMode = o.optBoolean("ktvMode", false),
             lyricFontSize = o.optInt("lyricFontSize", 22).coerceIn(12, 60),
             lyricSubColor = o.optInt("lyricSubColor", 0xFFD5D5DE.toInt()),
-            desktopLyricOn = o.optBoolean("desktopLyricOn", false),
-            desktopLyricFullscreen = o.optBoolean("desktopLyricFullscreen", false),
-            desktopLyricColor = o.optInt("desktopLyricColor", 0xFFFFFFFF.toInt()),
-            desktopLyricBgAlpha = run {
-                // v2.21.1：旧默认 0.35 一次性迁移为全透明；用户手动调过的其它值保留
-                val bg = o.optDouble("desktopLyricBgAlpha", 0.0).toFloat().coerceIn(0f, 1f)
-                if (bg == 0.35f) 0f else bg
-            },
-            desktopLyricSize = o.optDouble("desktopLyricSize", 22.0).toFloat().coerceIn(14f, 40f),
-            desktopLyricKtv = o.optBoolean("desktopLyricKtv", true),
-            desktopLyricLines = o.optInt("desktopLyricLines", 4).coerceIn(1, 15),
             coverImage = o.optString("coverImage", "").takeIf { it.isNotEmpty() },
             discImage = o.optString("discImage", "").takeIf { it.isNotEmpty() },
             lyricStyle = o.optInt("lyricStyle", MusicSettings.LYRIC_STYLE_WALL).coerceIn(0, 1),
@@ -566,13 +525,6 @@ class MusicStore(private val context: Context) {
                     .put("ktvMode", s.ktvMode)
                     .put("lyricFontSize", s.lyricFontSize)
                     .put("lyricSubColor", s.lyricSubColor)
-                    .put("desktopLyricOn", s.desktopLyricOn)
-                    .put("desktopLyricFullscreen", s.desktopLyricFullscreen)
-                    .put("desktopLyricColor", s.desktopLyricColor)
-                    .put("desktopLyricBgAlpha", s.desktopLyricBgAlpha.toDouble())
-                    .put("desktopLyricSize", s.desktopLyricSize.toDouble())
-                    .put("desktopLyricKtv", s.desktopLyricKtv)
-                    .put("desktopLyricLines", s.desktopLyricLines)
                     .put("coverImage", s.coverImage ?: "")
                     .put("discImage", s.discImage ?: "")
                     .put("lyricStyle", s.lyricStyle)
@@ -656,36 +608,6 @@ class MusicStore(private val context: Context) {
 
     fun clearLastSession() {
         runCatching { sessionFile.delete() }
-    }
-
-    // ---------- 桌面歌词锁定与位置（v2.21.3，独立文件避免与设置中心互相覆盖） ----------
-
-    private val overlayStateFile: File by lazy { File(dir, "desklyric.json") }
-
-    fun loadLyricOverlayState(): LyricOverlayState {
-        if (!overlayStateFile.isFile) return LyricOverlayState()
-        return runCatching {
-            val o = JSONObject(overlayStateFile.readText())
-            LyricOverlayState(
-                locked = o.optBoolean("locked", false),
-                pairY = o.optInt("pairY", -1),
-                fsX = o.optInt("fsX", -1),
-                fsY = o.optInt("fsY", -1)
-            )
-        }.getOrDefault(LyricOverlayState())
-    }
-
-    fun saveLyricOverlayState(s: LyricOverlayState) {
-        runCatching {
-            overlayStateFile.writeText(
-                JSONObject()
-                    .put("locked", s.locked)
-                    .put("pairY", s.pairY)
-                    .put("fsX", s.fsX)
-                    .put("fsY", s.fsY)
-                    .toString()
-            )
-        }
     }
 
     // ---------- 序列化 ----------
@@ -1037,27 +959,17 @@ fun cleanLocalName(name: String): String =
 // ==================== 下载目录 ====================
 
 /**
- * 歌曲下载目录：优先公共 Music/AnWindMusic（配合 MANAGE_EXTERNAL_STORAGE），
- * 不可写时回退应用专属外部目录 getExternalFilesDir(Music)/AnWindMusic。
+ * 歌曲下载目录（v1.4）：统一逻辑路径 公共 Music/AnWindMusic。
+ * - Android 10+：实际写入由 [MediaSaver.saveAudioFile] 走 MediaStore（免权限，
+ *   系统自动在公共音乐库创建该目录，其他播放器可见）；本函数仅提供
+ *   统一路径用于下载页显示、扫描路径过滤与已下载记录去重；
+ * - Android 9 及以下：直接 File 写入该目录（WRITE_EXTERNAL_STORAGE）。
  */
-fun musicDownloadDir(context: Context): File {
-    val candidates = listOf(
-        runCatching {
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
-                ?.let { File(it, "AnWindMusic") }
-        }.getOrNull(),
-        context.getExternalFilesDir(Environment.DIRECTORY_MUSIC)?.let { File(it, "AnWindMusic") },
-        File(context.filesDir, "music_downloads")
+fun musicDownloadDir(context: Context): File =
+    File(
+        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
+        "AnWindMusic"
     )
-    for (dir in candidates) {
-        if (dir == null) continue
-        if (dir.isDirectory && dir.canWrite()) return dir
-        if (!dir.exists()) {
-            if (dir.mkdirs() || (dir.isDirectory && dir.canWrite())) return dir
-        }
-    }
-    return File(context.filesDir, "music_downloads").apply { mkdirs() }
-}
 
 /** 清理文件名中的非法字符 */
 fun sanitizeFileName(name: String): String =

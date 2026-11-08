@@ -4,10 +4,12 @@ import android.content.ContentUris
 import android.content.Context
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Build
 import android.provider.MediaStore
 import java.io.File
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,15 +37,30 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 
 /**
  * 云音乐各页面（v2.17）：
@@ -85,6 +102,20 @@ fun SearchPage(
 ) {
     // v1.2：自定义主页背景激活时热门词芯片/列表文字随明暗自适应+光晕
     val sch = LocalAdaptiveScheme.current
+    // v1.4 TV 焦点修复：搜索后遥控不再卡死 ——
+    // ① 芯片行/首条结果行各持焦点请求器；首行按上键必回芯片行；
+    // ② 首次搜索出结果自动聚焦首行（OK 直接播放）；加载更多不抢焦点
+    val sourceRowFocus = remember { FocusRequester() }
+    val firstRowFocus = remember { FocusRequester() }
+    var firstRowHasFocus by remember { mutableStateOf(false) }
+    var prevResultsCount by remember { mutableStateOf(-1) }
+    LaunchedEffect(searching) {
+        if (TvCompat.isTv && !searching && results.isNotEmpty() && prevResultsCount == 0) {
+            delay(80)
+            runCatching { firstRowFocus.requestFocus() }
+        }
+        prevResultsCount = results.size
+    }
     Column(Modifier.fillMaxSize()) {
         // 顶部搜索框
         McSearchField(
@@ -100,7 +131,10 @@ fun SearchPage(
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp),
+                .padding(horizontal = 16.dp)
+                // v1.4 TV：芯片行可被首行上键直接定位；下键定向到首条结果
+                .focusRequester(sourceRowFocus)
+                .focusProperties { down = firstRowFocus },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -230,7 +264,23 @@ fun SearchPage(
                 Text("时长", fontSize = 11.sp, color = headerColor, style = TextStyle(shadow = sch.shadow), modifier = Modifier.width(46.dp))
                 Spacer(Modifier.width(112.dp)) // 收藏+词+下载按钮空间（v2.21.4 加词芯片）
             }
-            LazyColumn(Modifier.fillMaxSize()) {
+            LazyColumn(
+                state = rememberLazyListState(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    // v1.4 TV：首条结果聚焦时按上键直接回音源芯片行
+                    // （修复搜索后无法再点选聚合/酷吾：列表顶部焦点不再卡死；
+                    //   请求失败时返回 false 放行原生几何寻焦，双保险）
+                    .onPreviewKeyEvent { e ->
+                        if (TvCompat.isTv && e.type == KeyEventType.KeyDown &&
+                            e.key == Key.DirectionUp && firstRowHasFocus
+                        ) {
+                            runCatching { sourceRowFocus.requestFocus() }.isSuccess
+                        } else {
+                            false
+                        }
+                    }
+            ) {
                 itemsIndexed(results, key = { i, s -> "${s.key}_$i" }) { index, song ->
                     SongRow(
                         index = index + 1,
@@ -242,7 +292,15 @@ fun SearchPage(
                         onPlay = { onPlay(song) },
                         onToggleFav = { onToggleFav(song) },
                         onDownload = { onDownload(song) },
-                        onDownloadLyric = { onDownloadLyric(song) }
+                        onDownloadLyric = { onDownloadLyric(song) },
+                        // v1.4 TV：首行可被芯片行下键定位/搜索后自动聚焦
+                        modifier = if (index == 0) {
+                            Modifier
+                                .focusRequester(firstRowFocus)
+                                .onFocusChanged { firstRowHasFocus = it.hasFocus }
+                        } else {
+                            Modifier
+                        }
                     )
                 }
                 // 加载更多（v2.24：简音源无分页时隐藏）
@@ -591,12 +649,14 @@ private fun SongRow(
     onToggleFav: () -> Unit,
     onDownload: (() -> Unit)?,
     // v2.21.4：歌词下载动作（词芯片，仅搜索页传入；null = 不显示）
-    onDownloadLyric: (() -> Unit)? = null
+    onDownloadLyric: (() -> Unit)? = null,
+    // v1.4 TV：外部附加修饰符（首行焦点请求器等）
+    modifier: Modifier = Modifier
 ) {
     // v1.2：整行文字/图标随背景明暗自适应，直接压在背景上的文字加光晕
     val sch = LocalAdaptiveScheme.current
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
             .height(58.dp)
             .background(if (isCurrent) Mc.selectedRow else Color.Transparent)
@@ -741,7 +801,7 @@ fun queryLocalSongs(
         val dirs = scanDirs.toMutableList()
         val dlDir = musicDownloadDir(context).absolutePath
         if (dlDir.isNotEmpty() && dirs.none { it == dlDir }) dirs.add(dlDir)
-        scanSpecifiedDirs(dirs)
+        scanSpecifiedDirs(context, dirs)
     } else {
         scanMediaStore(context)
     }
@@ -856,11 +916,85 @@ private fun scanMediaStore(context: Context): List<SongInfo> {
 }
 
 /**
- * 指定目录扫描：递归遍历目录下的音频文件，
+ * 指定目录扫描（v1.4 权限瘦身）：
+ * - Android 11+：MediaStore DATA 路径前缀过滤查询 —— 只需 READ_MEDIA_AUDIO /
+ *   READ_EXTERNAL_STORAGE 普通媒体权限（系统已索引的音频全部可见），
+ *   彻底摆脱「所有文件访问」（MANAGE_EXTERNAL_STORAGE），手机/电视安全检测不再拦截；
+ * - Android 10 及以下：保持 File 递归遍历（requestLegacyExternalStorage +
+ *   READ_EXTERNAL_STORAGE 下行为与旧版一致）。
+ */
+private fun scanSpecifiedDirs(context: Context, dirs: List<String>): List<SongInfo> =
+    if (Build.VERSION.SDK_INT >= 30) {
+        scanDirsViaMediaStore(context, dirs)
+    } else {
+        scanDirsByFile(dirs)
+    }
+
+/**
+ * Android 11+：MediaStore 路径前缀过滤（DATA LIKE 'dir/%' 天然递归匹配子目录）。
+ * 目录数量上限 50（SQLite 绑定变量安全），按绝对路径去重。
+ */
+private fun scanDirsViaMediaStore(context: Context, dirs: List<String>): List<SongInfo> {
+    val normDirs = dirs.map { it.trimEnd('/') }.filter { it.isNotEmpty() }.distinct().take(50)
+    if (normDirs.isEmpty()) return emptyList()
+    val list = mutableListOf<SongInfo>()
+    val seen = HashSet<String>()
+    val selection = normDirs.joinToString(" OR ") { "${MediaStore.Audio.Media.DATA} LIKE ?" }
+    val args = normDirs.map { "$it/%" }.toTypedArray()
+    val projection = arrayOf(
+        MediaStore.Audio.Media._ID,
+        MediaStore.Audio.Media.TITLE,
+        MediaStore.Audio.Media.ARTIST,
+        MediaStore.Audio.Media.ALBUM,
+        MediaStore.Audio.Media.DURATION,
+        MediaStore.Audio.Media.DATA
+    )
+    runCatching {
+        context.contentResolver.query(
+            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+            projection,
+            selection,
+            args,
+            "${MediaStore.Audio.Media.TITLE} ASC"
+        )?.use { c ->
+            val idCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+            val titleCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
+            val artistCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
+            val albumCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
+            val durCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
+            val dataCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
+            while (c.moveToNext()) {
+                val path = runCatching { c.getString(dataCol) }.getOrNull()
+                    ?.takeIf { it.isNotBlank() } ?: continue
+                if (!seen.add(path)) continue
+                val id = c.getLong(idCol)
+                val uri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
+                val fileNameTitle = File(path).nameWithoutExtension
+                list.add(
+                    SongInfo(
+                        id = id.toString(),
+                        name = c.getString(titleCol)?.takeIf { it.isNotBlank() } ?: fileNameTitle,
+                        artist = (c.getString(artistCol) ?: "").ifBlank { "未知歌手" },
+                        album = (c.getString(albumCol) ?: "").ifBlank { "未知专辑" },
+                        durationMs = c.getLong(durCol),
+                        picUrl = "",
+                        source = SongInfo.SOURCE_LOCAL,
+                        localUri = uri.toString(),
+                        localPath = path
+                    )
+                )
+            }
+        }
+    }
+    return list
+}
+
+/**
+ * Android 10 及以下：递归遍历目录下的音频文件，
  * 用 MediaMetadataRetriever 读音频内真实标签（标题/歌手/专辑/时长），
  * 读取失败时回退按文件名推断（"歌手 - 标题.mp3"）。
  */
-private fun scanSpecifiedDirs(dirs: List<String>): List<SongInfo> {
+private fun scanDirsByFile(dirs: List<String>): List<SongInfo> {
     val seen = HashSet<String>()
     val out = mutableListOf<SongInfo>()
     val mmr = MediaMetadataRetriever()

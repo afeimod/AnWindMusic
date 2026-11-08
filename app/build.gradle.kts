@@ -17,8 +17,9 @@ android {
         applicationId = "com.anwindmusic"
         minSdk = 24
         targetSdk = 34
-        versionCode = 11
-        versionName = "1.3.0"
+        // v1.4.0：安全检测兼容（权限瘦身）+ TV 修复（内置选择器/聚合播放/滑条键控/搜索焦点）
+        versionCode = 12
+        versionName = "1.4.0"
 
         vectorDrawables {
             useSupportLibrary = true

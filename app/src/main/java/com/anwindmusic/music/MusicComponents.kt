@@ -556,6 +556,9 @@ fun McSearchField(
                 modifier = Modifier
                     .fillMaxWidth()
                     .focusRequester(textFieldFocus)
+                    // v1.4 TV：D-pad 上下键移出搜索框（单行输入框会吞上下键，
+                    // 旧版遥控会卡死在搜索框里，无法再点选音源芯片/结果）
+                    .tvTextFieldNav()
                     // TV：D-pad 聚焦到搜索框时自动弹出系统输入法（遥控可直接输入搜索词）
                     .onFocusChanged {
                         if (tv && it.isFocused) keyboard?.show()

@@ -321,14 +321,9 @@ class PlaybackService : Service() {
 
     // ==================== 退出 ====================
 
-    /** 通知栏「退出」：停播释放引擎（会话进度已由引擎落盘）+ 关桌面歌词 + 移除通知 */
+    /** 通知栏「退出」：停播释放引擎（会话进度已由引擎落盘）+ 移除通知 */
     private fun exitNow() {
         MusicEngineHolder.shutdown()
-        DesktopLyricBus.songName = ""
-        DesktopLyricBus.lines = emptyList()
-        DesktopLyricBus.index = -1
-        DesktopLyricBus.playing = false
-        runCatching { stopService(Intent(this, LyricOverlayService::class.java)) }
         if (Build.VERSION.SDK_INT >= 24) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {

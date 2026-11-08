@@ -1,9 +1,5 @@
 package com.anwindmusic.music
 
-import android.content.Intent
-import android.net.Uri
-import android.provider.Settings
-import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -49,7 +45,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -88,16 +83,16 @@ val LyricSubColors = listOf(
 /**
  * 播放器设置中心（v2.18 新增，v2.21 扩充）：
  * - 外观：主页背景（默认/纯色/渐变/自定义图片 + 压暗）—— 全局生效
- *   （侧栏/底栏半透明融合），图片/文件夹选择均拉起 AnWind 桌面文件资源管理器
+ *   （侧栏/底栏半透明融合），图片/文件夹选择优先拉系统选择器，
+ *   电视/无文件管理器设备自动切换应用内置选择器（v1.4）
  * - 歌词秀：背景自定义、封面/光盘/背景三类图片均可自定义、封面模糊度与压暗可调、
  *   3D 倾斜参数（大范围）、逐字左右字体差、当前行高亮颜色、KTV 渐进样式、字号、
  *   行切换动画、高亮发光、翻译显示
- * - 桌面歌词：开关（引导悬浮窗权限）、两行/全屏双模式、字体颜色、背景不透明度、
- *   字号、KTV 逐字变色、全屏歌词行数 1-15（两种模式背景宽度均随歌词自适应；
- *   v2.21.2 起播放器关闭时悬浮窗随之关闭）
  * - 词源：智能回退 / 酷我 / 网易云 / QQ 音乐 / LRCLIB 优先级
- * - 本地扫描：全库 / 仅指定目录（目录列表 + 文件夹选择 + 手动输入）
+ * - 本地扫描：全库 / 仅指定目录（目录列表 + 文件夹选择 + 手动输入；
+ *   v1.4 起指定目录扫描走 MediaStore 路径过滤，无需「所有文件访问」）
  * 所有修改即时持久化（onChange → saveMusicSettings），滑条拖动过程中实时生效。
+ * v1.4：移除桌面歌词分区（悬浮窗功能下线，过安全检测）。
  */
 @Composable
 fun SettingsPage(
@@ -113,13 +108,8 @@ fun SettingsPage(
     onPickDiscImage: () -> Unit,
     onPickFolder: () -> Unit,
     onRescan: () -> Unit,
-    /** v2.21.3：桌面歌词锁定状态（存 desklyric.json，与位置同文件） */
-    lyricLocked: Boolean = false,
-    /** v2.21.3：锁定开关回调 —— 写入后唤醒服务重建窗口 */
-    onLyricLockChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -370,97 +360,6 @@ fun SettingsPage(
             Caption("真透视歌词墙：整面墙俯仰/偏航 + 纵深收敛 + 行内逐字左右字体差（行首小行尾大）；俯仰 0° + 视角 0° + 纵深 0 + 字体差 0 即为平面滚动歌词；非高亮颜色同步作用于非当前行、翻译行与 KTV 未唱部分；竖屏时整体靠右（同 1.1），短行贴右缘，长行单行从行首起显、唱到后随播放滚入右侧隐藏部分（不换行，v1.2.3）")
         }
 
-        SettingsSection("桌面歌词") {
-            SettingSwitch(
-                title = "开启桌面歌词",
-                desc = "手机桌面悬浮歌词（需授予「显示在应用上层」权限；颜色/透明度/字号拖动即时生效）",
-                checked = settings.desktopLyricOn,
-                onChange = { enabled ->
-                    if (enabled && !Settings.canDrawOverlays(context)) {
-                        Toast.makeText(
-                            context,
-                            "请先授予 AnWind云音乐「显示在应用上层」权限，返回后再打开此开关",
-                            Toast.LENGTH_LONG
-                        ).show()
-                        runCatching {
-                            context.startActivity(
-                                Intent(
-                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                    Uri.parse("package:${context.packageName}"
-                                    )).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            )
-                        }
-                    } else {
-                        onChange(settings.copy(desktopLyricOn = enabled))
-                    }
-                }
-            )
-            if (settings.desktopLyricOn) {
-                Spacer(Modifier.height(8.dp))
-                ModeChipsRow(
-                    options = listOf(0 to "两行模式（参考图）", 1 to "桌面全屏歌词"),
-                    selected = if (settings.desktopLyricFullscreen) 1 else 0,
-                    onSelect = { onChange(settings.copy(desktopLyricFullscreen = it == 1)) }
-                )
-                Text(
-                    text = "字体颜色",
-                    fontSize = 12.sp,
-                    color = LocalAdaptiveScheme.current.textSecondary,
-                    style = TextStyle(shadow = LocalAdaptiveScheme.current.shadow),
-                    modifier = Modifier.padding(top = 10.dp)
-                )
-                ColorSwatchRow(
-                    colors = LyricAccentColors,
-                    selected = settings.desktopLyricColor,
-                    onSelect = { onChange(settings.copy(desktopLyricColor = it)) }
-                )
-                SettingSlider(
-                    title = "背景不透明度",
-                    display = "${(settings.desktopLyricBgAlpha * 100).toInt()}%",
-                    value = settings.desktopLyricBgAlpha,
-                    range = 0f..1f,
-                    steps = 19,
-                    onChange = { onChange(settings.copy(desktopLyricBgAlpha = it)) }
-                )
-                SettingSlider(
-                    title = "字号",
-                    display = "${settings.desktopLyricSize.toInt()}sp",
-                    value = settings.desktopLyricSize,
-                    range = 14f..40f,
-                    steps = 25,
-                    onChange = { onChange(settings.copy(desktopLyricSize = it)) }
-                )
-                SettingSwitch(
-                    title = "KTV 逐字变色",
-                    desc = "当前行按播放进度从左向右逐字扫色，未唱部分半透明白（两种模式均生效）",
-                    checked = settings.desktopLyricKtv,
-                    onChange = { onChange(settings.copy(desktopLyricKtv = it)) }
-                )
-                // v2.21.3：锁定/解锁 —— 锁定后触摸穿透不挡其他应用、记住位置
-                SettingSwitch(
-                    title = "锁定桌面歌词",
-                    desc = "锁定后悬浮窗不拦截触摸（不挡其他应用操作）、记住当前位置；" +
-                        "解锁可点通知栏「解锁桌面歌词」或本开关",
-                    checked = lyricLocked,
-                    onChange = { onLyricLockChange(it) }
-                )
-                SettingSlider(
-                    title = "全屏歌词行数",
-                    display = "${settings.desktopLyricLines} 行",
-                    value = settings.desktopLyricLines.toFloat(),
-                    range = 1f..15f,
-                    steps = 14,
-                    onChange = { onChange(settings.copy(desktopLyricLines = it.toInt())) }
-                )
-            }
-            Caption(
-                "两行模式：通栏悬浮窗 —— 当前行靠屏幕左缘、下一行靠屏幕右缘（留有边距），字号相同，" +
-                    "按住可上下拖动，当前行播完两行同时轮换；全屏模式：行数可设的歌词横幅居中。" +
-                    "两种模式背景均随歌词自适应宽度，不固定宽；未锁定时右下角有「锁定」按钮，" +
-                    "锁定后触摸穿透且记住位置；黑描边字体保证任意壁纸上可读；关闭开关立即消失"
-            )
-        }
-
         SettingsSection("歌词词源") {
             for ((id, label) in MusicSettings.ENGINE_LABELS) {
                 EngineRadioRow(
@@ -504,7 +403,7 @@ fun SettingsPage(
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        text = "从系统文件选择器中选择文件夹",
+                        text = "从系统文件选择器中选择文件夹（电视请用下方手动输入）",
                         fontSize = 13.sp,
                         color = Mc.red,
                         fontWeight = FontWeight.Medium,
@@ -544,7 +443,9 @@ fun SettingsPage(
             Caption(
                 "指定目录模式只扫描你选择的文件夹，避免把铃声/语音等无关音频扫进曲库；" +
                     "应用下载目录默认纳入且始终自动扫描，不会被目录过滤屏蔽；" +
-                    "点击选择会拉起系统文件夹选择器（手机主存储自动换算为真实路径；其他位置请用下方手动输入）"
+                    "v1.4：目录扫描走媒体库（MediaStore）路径过滤，只需音频读取权限，" +
+                    "无需「所有文件访问」，手机/电视均不再触发安全检测；" +
+                    "电视无系统文件夹选择器，直接在下方手动输入路径（如 /storage/emulated/0/Music）"
             )
         }
 
@@ -561,8 +462,8 @@ fun SettingsPage(
         }
 
         SettingsSection("关于") {
-            Caption("音源：酷我（搜索 / 播放 / 下载） · 词源：酷我 / 网易云 / QQ 音乐 / LRCLIB")
-            Caption("AnWind云音乐（独立版）v1.2.3 · 源自 AnWind 云音乐 · 3D 歌词秀 · 桌面歌词 · 视频背景")
+            Caption("音源：酷我 + 聚合（网易云/酷狗） · 词源：酷我 / 网易云 / QQ 音乐 / LRCLIB")
+            Caption("AnWind云音乐（独立版）v1.4.0 · 3D 歌词秀 · 视频背景 · TV 遥控适配 · 隐私权限最小化")
         }
         Spacer(Modifier.height(20.dp))
     }
@@ -853,6 +754,14 @@ private fun SettingSlider(
                 .height(26.dp)
                 // TV：滑条聚焦时红色描边（聚焦后左右键按步进增减）
                 .tvFocus(RoundedCornerShape(13.dp))
+                // v1.4 TV：D-pad 左右键按刻度步进（修复电视上滑条无法调节）
+                .tvSliderSteps(
+                    value = if (dragging) dragValue
+                    else value.coerceIn(range.start, range.endInclusive),
+                    range = range,
+                    steps = steps,
+                    onValue = onChange
+                )
         )
         Text(
             text = display,
@@ -1008,8 +917,9 @@ private fun ManualDirInput(onAdd: (String) -> Unit) {
             modifier = Modifier
                 .weight(1f)
                 .height(46.dp)
-                // TV：输入框聚焦时红色描边
+                // TV：输入框聚焦时红色描边；上下键移出输入框（焦点逃逸）
                 .tvFocus(RoundedCornerShape(8.dp))
+                .tvTextFieldNav()
         )
         IconButton(
             onClick = {

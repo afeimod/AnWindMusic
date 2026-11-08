@@ -12,12 +12,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 
 /**
  * Android TV 兼容层（TV 版改造新增）：
@@ -28,10 +36,16 @@ import androidx.compose.ui.unit.dp
  * - [Modifier.tvFocus]：TV 遥控焦点高亮 —— 元素自身或其子孙获得焦点时，
  *   叠加品牌红描边 + 轻微红色底衬（可选轻微放大），手机/平板上完全无操作。
  *
- * 遥控适配原理：Compose 的 clickable/focusable/Slider/Switch/TextField 均已内置
+ * 遥控适配原理：Compose 的 clickable/focusable/Switch/TextField 均已内置
  * 键盘焦点目标，D-pad 上下左右自动几何寻焦、确认键（DPAD_CENTER/ENTER）触发点击、
- * 滑条聚焦后左右键增减、返回键走 BackHandler —— 本文件负责把「焦点在哪」
+ * 返回键走 BackHandler —— 本文件负责把「焦点在哪」
  * 以清晰可视的方式呈现出来，并处理初始焦点与焦点归还。
+ *
+ * v1.4 新增两个专用修饰符（修复电视实测反馈）：
+ * - [Modifier.tvSliderSteps]：滑条聚焦后 D-pad 左右键按刻度步进增减
+ *   （M3 Slider 在部分电视固件上不响应左右键，焦点会跑掉）；
+ * - [Modifier.tvTextFieldNav]：输入框聚焦时 D-pad 上下键移动焦点离开
+ *   （单行输入框会吞上下键光标事件，导致遥控卡死在搜索框里）。
  */
 object TvCompat {
 
@@ -101,4 +115,73 @@ fun Modifier.tvFocus(
                 Modifier
             }
         )
+}
+
+/**
+ * TV 滑条键盘步进（v1.4）：聚焦后拦截 D-pad 左右键按刻度增减值。
+ *
+ * 修复：部分电视固件上 M3 Slider 虽可聚焦但左右键被焦点系统拿去做寻焦，
+ * 值不变、焦点跑丢（设置页全部滑条调不了的根因）。onPreviewKeyEvent
+ * 在隧道阶段拦截并消费事件，保证左右键 100% 步进。
+ *
+ * 步长：steps>0 时按 M3 刻度（steps+1 段）对齐刻度；steps=0 连续滑条按
+ * 全程 1/50 步进。非 TV 设备原样返回，不影响触摸拖动。
+ *
+ * @param value 当前值（调用方与 Slider 同源）
+ * @param onValue 新值回调（已按刻度对齐并夹在区间内）
+ */
+fun Modifier.tvSliderSteps(
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    steps: Int,
+    onValue: (Float) -> Unit
+): Modifier = composed {
+    if (!TvCompat.isTv) return@composed this
+    this.onPreviewKeyEvent { e ->
+        if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+        val delta = (range.endInclusive - range.start) /
+            (if (steps > 0) (steps + 1) * 1f else 50f)
+        when (e.key) {
+            Key.DirectionLeft -> {
+                val raw = value - delta
+                val snapped = if (steps > 0) {
+                    val k = ((raw - range.start) / delta).roundToInt().coerceIn(0, steps + 1)
+                    range.start + k * delta
+                } else raw
+                onValue(snapped.coerceIn(range.start, range.endInclusive))
+                true
+            }
+            Key.DirectionRight -> {
+                val raw = value + delta
+                val snapped = if (steps > 0) {
+                    val k = ((raw - range.start) / delta).roundToInt().coerceIn(0, steps + 1)
+                    range.start + k * delta
+                } else raw
+                onValue(snapped.coerceIn(range.start, range.endInclusive))
+                true
+            }
+            else -> false
+        }
+    }
+}
+
+/**
+ * TV 输入框焦点逃逸（v1.4）：聚焦时 D-pad 上下键移出输入框。
+ *
+ * 修复：单行 TextField 会吞上下键（光标移动事件），遥控器在搜索框/手动
+ * 输入框里按上下键无反应，永远出不去（“搜索后无法再点选音源芯片”的
+ * 根因之一）。左右键保留给光标移动不动。
+ */
+fun Modifier.tvTextFieldNav(): Modifier = composed {
+    if (!TvCompat.isTv) return@composed this
+    val focusManager = LocalFocusManager.current
+    this.onPreviewKeyEvent { e ->
+        if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+        when (e.key) {
+            Key.DirectionDown -> focusManager.moveFocus(FocusDirection.Down)
+            Key.DirectionUp -> focusManager.moveFocus(FocusDirection.Up)
+            else -> return@onPreviewKeyEvent false
+        }
+        true
+    }
 }

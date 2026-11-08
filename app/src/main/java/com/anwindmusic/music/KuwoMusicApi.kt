@@ -197,6 +197,51 @@ object KuwoMusicApi {
         return null
     }
 
+    // ==================== 按歌名兜底解析（v1.4） ====================
+
+    /**
+     * 按「歌手 歌名」搜酷我取最优匹配的播放直链（v1.4 新增）。
+     *
+     * 用途：Meting 聚合源解析失败时的兜底 —— Meting 歌曲 ID 是网易云/酷狗 ID，
+     * 不能直接传给酷我播放接口；改按歌名搜索酷我再解析，保证聚合歌在任何
+     * 网络/源异常下仍可播放。
+     */
+    suspend fun searchPlayUrlByTitle(artist: String, name: String): String? =
+        withContext(Dispatchers.IO) {
+            val kw = listOf(artist, name).filter { it.isNotBlank() }.joinToString(" ").trim()
+            if (kw.isEmpty()) return@withContext null
+            runCatching {
+                val songs = search(kw, 0, 20).getOrNull() ?: return@runCatching null
+                if (songs.isEmpty()) return@runCatching null
+                // 优先取歌名吻合的结果（避免同名翻唱/伴奏）
+                val target = normalizeMatchText(name)
+                val best = songs.firstOrNull { s ->
+                    val n = normalizeMatchText(s.name)
+                    n.isNotEmpty() && (n.contains(target) || target.contains(n))
+                } ?: songs.first()
+                getPlayUrl(best.id).getOrNull()
+            }.getOrNull()
+        }
+
+    /**
+     * 统一播放直链解析策略（v1.4）：
+     * - 非聚合歌：酷我 ID 直解；
+     * - 聚合歌（metingServer 非空）：Meting 代理直链优先，失败按「歌手 歌名」
+     *   搜酷我兜底 —— 修复旧代码把网易云/酷狗 ID 当酷我 ID 直解必然失败的问题。
+     */
+    suspend fun resolvePlayUrlSmart(
+        metingServer: String?,
+        songId: String,
+        artist: String,
+        name: String
+    ): Result<String> {
+        if (metingServer == null) return getPlayUrl(songId)
+        val meting = MetingMusicApi.resolvePlayUrl(metingServer, songId)
+        if (meting.isSuccess) return meting
+        val fallback = searchPlayUrlByTitle(artist, name)
+        return if (fallback != null) Result.success(fallback) else meting
+    }
+
     // ==================== 歌词（酷我） ====================
 
     /**

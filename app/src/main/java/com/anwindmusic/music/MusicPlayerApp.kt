@@ -81,17 +81,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 云音乐独立版（v1.1.0，移植自 AnWind 桌面云音乐 v2.21.5）：
  * - 纯手机布局：顶部标题栏 + 内容页 + 紧凑播放条 + 底部导航栏（对照网易云音乐手机版）
  * - 功能与桌面版一致：搜索播放、我喜欢、最近播放、本地音乐、歌曲/歌词下载、
- *   3D 歌词秀（Lyrics3DPage）、桌面歌词悬浮窗（LyricOverlayService）、设置中心
+ *   3D 歌词秀（Lyrics3DPage）、设置中心、内置图片/视频选择器（v1.4）
  * - v2.25 修复：搜索里下载的音乐自动加入本地音乐库（记录下载文件 + 扫描合并 + 自动重扫）
  * - 在线音乐与歌词数据源：酷我搜索/播放链接 + 酷我/网易云/QQ/LRCLIB 四级词源回退
- * - 背景图片/扫描目录选择改走系统文件选择器（MainActivity 经 [PickBus] 回传）
+ * - 背景图片/扫描目录选择改走系统文件选择器（MainActivity 经 [PickBus] 回传）；
+ *   电视/无文件管理器设备自动回落应用内置选择器（v1.4）
  * - 后台持续播放：起播即拉起前台服务 PlaybackService（通知栏播放控制 + 锁屏线控）
+ * - v1.4：移除桌面歌词悬浮窗（过安全检测）；下载改 MediaStore 入库（免「所有文件访问」）
  */
 
 // ==================== 文件选择事件总线 ====================
@@ -139,12 +143,13 @@ class DownloadItem(val song: SongInfo) {
 
 @Composable
 fun MusicContent(
-    /** 系统图片选择器（kind：homeImage / lyricImage / coverImage / discImage） */
-    onPickImage: (String) -> Unit,
-    /** v1.2 系统视频选择器（kind：homeVideo / lyricVideo，主页/歌词页背景视频） */
-    onPickVideo: (String) -> Unit,
-    /** 系统文件夹选择器（本地扫描目录） */
-    onPickFolder: () -> Unit,
+    /** 系统图片选择器（kind：homeImage / lyricImage / coverImage / discImage）：
+     *  v1.4 返回是否拉起成功（电视/无 DocumentsUI 设备返回 false → 内置选择器兑底） */
+    onPickImage: (String) -> Boolean,
+    /** v1.2 系统视频选择器（kind：homeVideo / lyricVideo），返回值同上 */
+    onPickVideo: (String) -> Boolean,
+    /** 系统文件夹选择器（本地扫描目录），返回值同上（false → 提示手动输入） */
+    onPickFolder: () -> Boolean,
     /** 是否处于沉浸式全屏（歌词页隐藏系统状态栏/导航栏） */
     isFullscreen: Boolean,
     /** 切换沉浸式全屏 */
@@ -193,15 +198,6 @@ fun MusicContent(
         recent = engine.store.loadRecent()
     }
 
-    // ===== 桌面歌词锁定开关（状态存 desklyric.json，与位置同文件） =====
-    var lyricOverlayState by remember { mutableStateOf(engine.store.loadLyricOverlayState()) }
-    fun updateLyricLock(locked: Boolean) {
-        lyricOverlayState = lyricOverlayState.copy(locked = locked)
-        engine.store.saveLyricOverlayState(lyricOverlayState)
-        // 服务已运行则经 onStartCommand 重读锁定状态并重建窗口；未运行则拉起
-        if (musicSettings.desktopLyricOn) startDesktopLyricService(context)
-    }
-
     // ===== 本地音乐 =====
     var localSongs by remember { mutableStateOf<List<SongInfo>>(emptyList()) }
     var scanning by remember { mutableStateOf(false) }
@@ -223,13 +219,34 @@ fun MusicContent(
         if (musicSettings.scanMode == MusicSettings.SCAN_DIRS) scanLocal()
     }
 
-    // ===== 系统文件选择器（替代桌面版文件资源管理器） =====
+    // ===== 文件选择（v1.4：SAF 优先 + 内置选择器兑底） =====
     // pendingPick 记录本次选择用途（图片归属/目录），PickBus 回传时按用途分发
     var pendingPick by remember { mutableStateOf<String?>(null) }
+    // 内置选择器打开的用途（null = 关闭；电视/SAF 拉不起时启用）
+    var inAppPickKind by remember { mutableStateOf<String?>(null) }
 
     fun openPicker(kind: String, mode: String) {
         pendingPick = kind
-        if (mode == "image") onPickImage(kind) else if (mode == "video") onPickVideo(kind) else onPickFolder()
+        val isMedia = mode == "image" || mode == "video"
+        // 电视直接用内置选择器（无 DocumentsUI，不浪费一次失败尝试）
+        if (TvCompat.isTv && isMedia) {
+            inAppPickKind = kind
+            return
+        }
+        val launched = when (mode) {
+            "image" -> onPickImage(kind)
+            "video" -> onPickVideo(kind)
+            else -> onPickFolder()
+        }
+        if (!launched) {
+            if (isMedia) {
+                // 手机上 SAF 意外拉不起（厂商裁剪/无文件管理器）→ 内置选择器兑底
+                inAppPickKind = kind
+            } else {
+                pendingPick = null
+                toast("此设备无法打开系统文件夹选择器，请在下方手动输入目录路径")
+            }
+        }
     }
 
     // ===== 动态清晰度（v1.2）：按自定义背景等效亮度切换全局明暗配色 =====
@@ -352,49 +369,63 @@ fun MusicContent(
         val item = DownloadItem(song)
         downloads.add(0, item)
         uiScope.launch {
-            // 1) 解析直链（v2.24：简音 Meting 音源走代理直链解析，其余走酷我解析）
-            val urlRes = song.metingServer
-                ?.let { MetingMusicApi.resolvePlayUrl(it, song.id) }
-                ?: KuwoMusicApi.getPlayUrl(song.id)
+            // 1) 解析直链（v1.4 统一策略：聚合歌 Meting 优先、失败按歌名搜酷我兜底）
+            val urlRes = KuwoMusicApi.resolvePlayUrlSmart(
+                song.metingServer, song.id, song.artist, song.name
+            )
             if (urlRes.isFailure) {
                 item.failed = true
                 item.error = urlRes.exceptionOrNull()?.message ?: "获取链接失败"
                 return@launch
             }
-            // 2) 下载音频
-            val dir = musicDownloadDir(context)
-            val file = File(dir, sanitizeFileName("${song.artist} - ${song.name}") + ".mp3")
-            val dl = KuwoMusicApi.downloadFile(urlRes.getOrThrow(), file) { done, total ->
+            // 2) 下载音频（v1.4：先落临时文件，成功后经 MediaStore 入公共音乐库，
+            //    不再需要「所有文件访问」权限）
+            val tmp = File(context.cacheDir, "dl_${System.currentTimeMillis()}_${song.key.hashCode()}.mp3")
+            val dl = KuwoMusicApi.downloadFile(urlRes.getOrThrow(), tmp) { done, total ->
                 if (total > 0) item.progress = (done.toFloat() / total).coerceIn(0f, 1f)
             }
             if (dl.isFailure) {
                 item.failed = true
                 item.error = dl.exceptionOrNull()?.message ?: "下载失败"
-                runCatching { file.delete() }
+                runCatching { tmp.delete() }
+                return@launch
+            }
+            val file = MediaSaver.saveAudioFile(
+                context,
+                sanitizeFileName("${song.artist} - ${song.name}") + ".mp3",
+                "audio/mpeg",
+                tmp
+            )
+            runCatching { tmp.delete() }
+            if (file == null) {
+                item.failed = true
+                item.error = "保存到音乐库失败"
                 return@launch
             }
             item.done = true
             item.progress = 1f
             item.file = file
-            // 3) 同步下载歌词到同目录
+            // 3) 同步下载歌词（v1.4：30+ 存 Download/AnWindMusic，旧系统与音乐同目录）
             val lyric = fetchLyrics(engine.store, song, engine = musicSettings.lyricEngine)
             if (lyric != null) {
-                runCatching {
-                    File(dir, file.nameWithoutExtension + ".lrc").writeText(LrcParser.toLrcText(lyric))
-                }
+                MediaSaver.saveLyricFile(
+                    context,
+                    file.nameWithoutExtension + ".lrc",
+                    LrcParser.toLrcText(lyric)
+                )
             }
             // 4) v2.25 修复：下载完成自动加入本地音乐库
             //    a) 持久化已下载文件路径（本地曲库扫描时合并，不依赖 MediaStore 异步索引）
             engine.store.addDownloadedPath(file.absolutePath)
             //    b) 回填 downloadedPath：我喜欢/最近播放中同曲下次播放优先用本地文件
             engine.store.backfillDownloadedPath(song.key, file.absolutePath)
-            //    c) 通知系统媒体库立即索引（其他播放器也能看到）
+            //    c) 通知系统媒体库立即索引（Android 9 及以下；10+ MediaStore 写入已即时索引）
             runCatching {
                 MediaScannerConnection.scanFile(
                     context, arrayOf(file.absolutePath), arrayOf("audio/mpeg"), null
                 )
             }
-            toast("下载完成：${file.name}")
+            toast("下载完成：${file.name}（已存入音乐库 Music/AnWindMusic）")
             refreshLibrary()
             //    d) 自动重扫本地曲库，新下载的歌曲立即出现在「本地音乐」页
             scanLocal()
@@ -415,12 +446,19 @@ fun MusicContent(
                 toast("未找到该歌曲的歌词")
                 return@launch
             }
-            val dir = musicDownloadDir(context)
-            val file = File(dir, sanitizeFileName("${song.artist} - ${song.name}") + ".lrc")
-            runCatching { file.writeText(LrcParser.toLrcText(lyric)) }
+            // v1.4：Android 10+ 存 Download/AnWindMusic（MediaStore 免权限），
+            // Android 9- 存公共音乐目录；不再依赖「所有文件访问」
+            val saved = MediaSaver.saveLyricFile(
+                context,
+                sanitizeFileName("${song.artist} - ${song.name}") + ".lrc",
+                LrcParser.toLrcText(lyric)
+            )
             // 若下载的是正在播放的歌曲，刷新其歌词显示
             if (song.key == engine.currentSong?.key) lyricRefreshTick++
-            toast("歌词已保存：${file.absolutePath}")
+            toast(
+                if (saved != null) "歌词已保存：${saved.absolutePath}"
+                else "歌词保存失败"
+            )
         }
     }
 
@@ -429,26 +467,6 @@ fun MusicContent(
     // UI 直读 engine.lyricDoc / engine.lyricLoading；后台播放时歌词照常推进
     LaunchedEffect(lyricRefreshTick) {
         if (lyricRefreshTick > 0) engine.refreshLyrics(force = true)
-    }
-
-    // ===== 桌面歌词偏好推送 =====
-    // 引擎负责把播放进度/歌词行推进到 DesktopLyricBus；此处负责
-    // 「偏好变化 → 推送镜像 + 拉起/关闭悬浮窗服务」
-    LaunchedEffect(
-        musicSettings.desktopLyricOn,
-        musicSettings.desktopLyricFullscreen,
-        musicSettings.desktopLyricColor,
-        musicSettings.desktopLyricBgAlpha,
-        musicSettings.desktopLyricSize,
-        musicSettings.desktopLyricKtv,
-        musicSettings.desktopLyricLines
-    ) {
-        DesktopLyricBus.applySettings(musicSettings)
-        if (musicSettings.desktopLyricOn) {
-            startDesktopLyricService(context)
-        } else {
-            stopDesktopLyricService(context)
-        }
     }
 
     // ===== 后台持续播放 =====
@@ -664,9 +682,7 @@ fun MusicContent(
                                 onPickCoverImage = { openPicker("coverImage", "image") },
                                 onPickDiscImage = { openPicker("discImage", "image") },
                                 onPickFolder = { openPicker("folder", "dir") },
-                                onRescan = { scanLocal() },
-                                lyricLocked = lyricOverlayState.locked,
-                                onLyricLockChange = { updateLyricLock(it) }
+                                onRescan = { scanLocal() }
                             )
                         }
                     }
@@ -754,6 +770,33 @@ fun MusicContent(
                 }
             }
         }
+    }
+
+    // ===== v1.4 内置图片/视频选择器（电视无系统文件管理器时的兑底，
+    //      画在主界面之后 → 盖在最上层；Back 返回键关闭） =====
+    val currentPickKind = inAppPickKind
+    if (currentPickKind != null) {
+        InAppMediaPicker(
+            kind = currentPickKind,
+            onClose = {
+                inAppPickKind = null
+                pendingPick = null
+            },
+            onPicked = { uri ->
+                inAppPickKind = null
+                uiScope.launch {
+                    // 选中项复制到应用私有目录后经 PickBus 回传（与 SAF 流程一致）
+                    val path = withContext(Dispatchers.IO) {
+                        MediaSaver.copyMediaToInternal(context, uri, currentPickKind)
+                    }
+                    if (path != null) {
+                        PickBus.publish(path)
+                    } else {
+                        toast("文件读取失败，请重试")
+                    }
+                }
+            }
+        )
     }
 }
 
@@ -929,6 +972,18 @@ private fun PlayerBarMobile(
                     .padding(horizontal = 6.dp)
                     // TV：滑条聚焦时红色描边（聚焦后左右键增减进度）
                     .tvFocus(RoundedCornerShape(16.dp))
+                    // v1.4 TV：D-pad 左右键按 1/50 全程步进并立即 seek
+                    .tvSliderSteps(
+                        value = if (userSeeking) seekPos
+                        else engine.positionMs.coerceAtMost(engine.durationMs).toFloat(),
+                        range = 0f..engine.durationMs.coerceAtLeast(1L).toFloat(),
+                        steps = 0,
+                        onValue = {
+                            seekPos = it
+                            userSeeking = false
+                            engine.seekTo(it.toLong())
+                        }
+                    )
             )
             Text(
                 text = fmtTime(engine.durationMs),
@@ -1111,6 +1166,13 @@ private fun PlayerBarMobile(
                     .width(112.dp)
                     .height(32.dp)
                     .tvFocus(RoundedCornerShape(16.dp))
+                    // v1.4 TV：D-pad 左右键按 1/50 音量步进
+                    .tvSliderSteps(
+                        value = engine.volume,
+                        range = 0f..1f,
+                        steps = 0,
+                        onValue = { engine.volume = it }
+                    )
             )
         }
     }
@@ -1185,6 +1247,18 @@ private fun PlayerBarCompact(
                     .padding(horizontal = 4.dp)
                     // TV：滑条聚焦时红色描边（聚焦后左右键增减进度）
                     .tvFocus(RoundedCornerShape(14.dp))
+                    // v1.4 TV：D-pad 左右键按 1/50 全程步进并立即 seek
+                    .tvSliderSteps(
+                        value = if (userSeeking) seekPos
+                        else engine.positionMs.coerceAtMost(engine.durationMs).toFloat(),
+                        range = 0f..engine.durationMs.coerceAtLeast(1L).toFloat(),
+                        steps = 0,
+                        onValue = {
+                            seekPos = it
+                            userSeeking = false
+                            engine.seekTo(it.toLong())
+                        }
+                    )
             )
             Text(
                 text = fmtTime(engine.durationMs),
