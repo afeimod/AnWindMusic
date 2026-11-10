@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,6 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -59,6 +61,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -117,15 +120,23 @@ fun InAppMediaPicker(
     // 缩略图缓存（滚动不重复解码）
     val thumbCache = remember { LruCache<String, Bitmap>(96) }
 
-    // v1.4.1 TV 焦点修复：选择器出现时主动抢焦点到关闭按钮，并在子树暂无焦点时
-    // 拦截 D-pad 方向/确认键 —— 杜绝遥控穿透到背后的音乐 App（原 bug：
-    // 选择器盖在最上层但焦点仍挂在主界面播放键，按方向/OK 仍操控音乐播放）
+    // v1.4.2 TV 焦点彻底修复（上一版 onPreviewKeyEvent 安全网根本不会触发：
+    // Compose 按键派发走焦点树，焦点不在选择器子树内时，选择器的 onPreviewKeyEvent
+    // 永远不调用 → 遥控方向/OK 全派发给背后主界面的播放键）。
+    // 正解：根 Box 自身 focusable + 抢焦重试，焦点进子树后 onPreviewKeyEvent 才会
+    // 生效，再由 focusManager.moveFocus 在子树内寻焦。
+    val rootFocus = remember { FocusRequester() }
     val closeFocus = remember { FocusRequester() }
-    var rootHasFocus by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
+    // isFocused=true 表示根 Box 自身持焦（非子孙）；用于区分“根持焦跳到关闭键” vs “子孙持焦几何寻焦”
+    var rootSelfFocused by remember { mutableStateOf(false) }
     if (TvCompat.isTv) {
         LaunchedEffect(Unit) {
-            delay(120)
-            runCatching { closeFocus.requestFocus() }
+            // 重试抢焦点：focusable 节点可能在首帧还未就绪，最多重试 10 次
+            repeat(10) {
+                runCatching { rootFocus.requestFocus() }
+                delay(50)
+            }
         }
     }
 
@@ -137,20 +148,40 @@ fun InAppMediaPicker(
             .fillMaxSize()
             .then(
                 if (TvCompat.isTv) Modifier
-                    .onFocusChanged { rootHasFocus = it.hasFocus }
+                    .focusRequester(rootFocus)
+                    .focusable()
+                    .onFocusChanged { state -> rootSelfFocused = state.isFocused }
                     .onPreviewKeyEvent { e ->
-                        // 子树无焦点时（焦点仍在背后主界面）→ 消费方向/确认键并抢回焦点
-                        if (!rootHasFocus && e.type == KeyEventType.KeyDown) {
-                            when (e.key) {
-                                Key.DirectionUp, Key.DirectionDown,
-                                Key.DirectionLeft, Key.DirectionRight,
-                                Key.DirectionCenter, Key.Enter -> {
+                        // 焦点已在选择器子树内（根或子孙），本拦截器一定触发
+                        if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when (e.key) {
+                            Key.DirectionDown -> {
+                                if (rootSelfFocused) {
+                                    // 根自身持焦 → moveFocus 从全屏元素不可靠，直接跳关闭键
                                     runCatching { closeFocus.requestFocus() }
-                                    true
+                                } else {
+                                    focusManager.moveFocus(FocusDirection.Down)
                                 }
-                                else -> false
+                                true
                             }
-                        } else false
+                            Key.DirectionUp -> {
+                                if (!rootSelfFocused) focusManager.moveFocus(FocusDirection.Up)
+                                true
+                            }
+                            Key.DirectionLeft -> {
+                                if (!rootSelfFocused) focusManager.moveFocus(FocusDirection.Left)
+                                true
+                            }
+                            Key.DirectionRight -> {
+                                if (!rootSelfFocused) focusManager.moveFocus(FocusDirection.Right)
+                                true
+                            }
+                            Key.DirectionCenter, Key.Enter -> {
+                                // 根自身持焦 → 消费（无动作）；子孙持焦 → 放行让 clickable 处理
+                                !rootSelfFocused
+                            }
+                            else -> false
+                        }
                     }
                 else Modifier
             )

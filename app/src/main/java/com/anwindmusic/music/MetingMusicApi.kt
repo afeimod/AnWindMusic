@@ -102,20 +102,37 @@ object MetingMusicApi {
      * 解析播放直链：type=url 端点 302 → 真实音频地址。
      * 手动跟随重定向取最终 URL（KuwoMusicApi.openFollowing，最多 5 跳）；
      * 若端点直接 200（代理流式）则返回代理地址本身，由系统播放栈自行处理。
+     *
+     * v1.4.2 修复聚合播放回归：原代码只要 finalUrl 以 http 开头就判成功，但 Meting
+     * 端点出错时（404/500/空响应/非音频内容）finalUrl 仍是 Meting 自身 URL（也以
+     * http 开头）→ 误判成功 → resolvePlayUrlSmart 永不触发「歌手 歌名」搜酷我兜底
+     * → 聚合歌无法播放。现要求：必须发生了重定向（finalUrl 不再是 Meting 端点）
+     * 或响应为音频流（Content-Type 以 audio/ 开头），才算解析成功。
      */
     suspend fun resolvePlayUrl(server: String, songId: String): Result<String> =
         withContext(Dispatchers.IO) {
             try {
-                val url = "$METING_URL?server=$server&type=url&id=${KuwoMusicApi.encodeQuery(songId)}"
+                val apiUrl = "$METING_URL?server=$server&type=url&id=${KuwoMusicApi.encodeQuery(songId)}"
                 val conn = KuwoMusicApi.openFollowing(
-                    url,
+                    apiUrl,
                     mapOf("User-Agent" to UA),
                     readTimeoutMs = 10_000
                 )
                 val finalUrl = conn.url.toString()
+                val contentType = conn.contentType ?: ""
                 conn.disconnect()
-                if (finalUrl.startsWith("http")) Result.success(finalUrl)
-                else Result.failure(IOException("播放直链解析失败"))
+                // 没发生重定向（finalUrl 仍是 Meting 端点）且不是音频流 → 端点异常，判失败让兜底接管
+                val stillOnMeting = finalUrl.contains("api.qijieya.cn/meting") ||
+                    finalUrl.contains("type=url")
+                val isAudioStream = contentType.startsWith("audio/")
+                when {
+                    !finalUrl.startsWith("http") ->
+                        Result.failure(IOException("播放直链解析失败"))
+                    !stillOnMeting || isAudioStream ->
+                        Result.success(finalUrl)
+                    else ->
+                        Result.failure(IOException("Meting 端点未返回有效音频直链"))
+                }
             } catch (e: Exception) {
                 Result.failure(e)
             }
