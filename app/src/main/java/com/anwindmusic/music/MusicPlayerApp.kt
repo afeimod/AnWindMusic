@@ -845,12 +845,12 @@ private fun MusicTopBar(onSettings: () -> Unit) {
             contentDescription = "设置",
             tint = if (sch.isCustom) sch.textPrimary else Mc.textSecondary,
             modifier = Modifier
-                // TV：图标与点击区放大，遥控 10 英尺外可辨
-                .size(if (TvCompat.isTv) 30.dp else 20.dp)
-                .clip(RoundedCornerShape(if (TvCompat.isTv) 10.dp else 6.dp))
-                .tvFocus(RoundedCornerShape(if (TvCompat.isTv) 10.dp else 6.dp), scaleUp = true)
+                // TV：图标与点击区适当收敛（HD 风格，非放大版手机）
+                .size(if (TvCompat.isTv) 24.dp else 20.dp)
+                .clip(RoundedCornerShape(if (TvCompat.isTv) 8.dp else 6.dp))
+                .tvFocus(RoundedCornerShape(if (TvCompat.isTv) 8.dp else 6.dp), scaleUp = true)
                 .clickable(onClick = onSettings)
-                .padding(if (TvCompat.isTv) 4.dp else 2.dp)
+                .padding(if (TvCompat.isTv) 3.dp else 2.dp)
         )
     }
 }
@@ -1242,8 +1242,8 @@ private fun PlayerBarCompact(
                 ),
                 modifier = Modifier
                     .weight(1f)
-                    // TV：横屏紧凑条即 TV 播放条，滑条加高便于遥控看清焦点与拖动
-                    .height(if (TvCompat.isTv) 28.dp else 20.dp)
+                    // TV：滑条高度收敛（HD 风格，原 28dp 过粗）
+                    .height(if (TvCompat.isTv) 22.dp else 20.dp)
                     .padding(horizontal = 4.dp)
                     // TV：滑条聚焦时红色描边（聚焦后左右键增减进度）
                     .tvFocus(RoundedCornerShape(14.dp))
@@ -1272,22 +1272,22 @@ private fun PlayerBarCompact(
         Row(
             Modifier
                 .fillMaxWidth()
-                .height(if (TvCompat.isTv) 44.dp else 40.dp)
+                .height(if (TvCompat.isTv) 38.dp else 40.dp)
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // 封面（点击打开/关闭 3D 歌词秀）
             Box(
                 Modifier
-                    .size(if (TvCompat.isTv) 34.dp else 30.dp)
+                    .size(30.dp)
                     .clip(RoundedCornerShape(5.dp))
                     .tvFocus(RoundedCornerShape(5.dp))
                     .clickable(onClick = onToggleLyrics)
             ) {
                 if (!coverOverride.isNullOrEmpty()) {
-                    BgImage(coverOverride, Modifier.size(if (TvCompat.isTv) 34.dp else 30.dp))
+                    BgImage(coverOverride, Modifier.size(30.dp))
                 } else {
-                    AsyncCover(song = song, modifier = Modifier.size(if (TvCompat.isTv) 34.dp else 30.dp))
+                    AsyncCover(song = song, modifier = Modifier.size(30.dp))
                 }
             }
             Spacer(Modifier.width(8.dp))
@@ -1344,7 +1344,7 @@ private fun PlayerBarCompact(
                 tint = if (sch.isCustom) sch.textSecondary else Mc.textSecondary,
                 modifier = Modifier
                     // TV：图标放大，遥控 10 英尺外可辨
-                    .size(if (TvCompat.isTv) 24.dp else 16.dp)
+                    .size(if (TvCompat.isTv) 20.dp else 16.dp)
                     .tvFocus(CircleShape, scaleUp = true)
                     .clickable { engine.cycleMode() }
             )
@@ -1357,7 +1357,7 @@ private fun PlayerBarCompact(
                 tint = if (isFav) Mc.red
                        else if (sch.isCustom) sch.textSecondary else Mc.textSecondary,
                 modifier = Modifier
-                    .size(if (TvCompat.isTv) 24.dp else 16.dp)
+                    .size(if (TvCompat.isTv) 20.dp else 16.dp)
                     .tvFocus(CircleShape, scaleUp = true)
                     .clickable(onClick = onToggleFav)
             )
@@ -1369,14 +1369,14 @@ private fun PlayerBarCompact(
                 contentDescription = "上一首",
                 tint = if (sch.isCustom) sch.textPrimary else Mc.textPrimary,
                 modifier = Modifier
-                    .size(if (TvCompat.isTv) 28.dp else 20.dp)
+                    .size(if (TvCompat.isTv) 22.dp else 20.dp)
                     .tvFocus(CircleShape, scaleUp = true)
                     .clickable { engine.prev() }
             )
             Spacer(Modifier.width(10.dp))
             Box(
                 Modifier
-                    .size(if (TvCompat.isTv) 38.dp else 30.dp)
+                    .size(if (TvCompat.isTv) 32.dp else 30.dp)
                     .clip(CircleShape)
                     .background(Mc.red)
                     .tvFocus(CircleShape, accent = Color.White)
@@ -1404,7 +1404,7 @@ private fun PlayerBarCompact(
                 contentDescription = "下一首",
                 tint = if (sch.isCustom) sch.textPrimary else Mc.textPrimary,
                 modifier = Modifier
-                    .size(if (TvCompat.isTv) 28.dp else 20.dp)
+                    .size(if (TvCompat.isTv) 22.dp else 20.dp)
                     .tvFocus(CircleShape, scaleUp = true)
                     .clickable { engine.next() }
             )
@@ -1445,7 +1445,7 @@ private fun MusicBottomNavCompact(page: Page, onPageChange: (Page) -> Unit, anyF
         }
     }
     NavigationBar(
-        modifier = Modifier.height(if (TvCompat.isTv) 52.dp else 46.dp),
+        modifier = Modifier.height(46.dp),
         containerColor = if (sch.isCustom) sch.glass else Color.White,
         tonalElevation = 0.dp
     ) {
@@ -1456,7 +1456,7 @@ private fun MusicBottomNavCompact(page: Page, onPageChange: (Page) -> Unit, anyF
                 modifier = Modifier
                     .focusRequester(itemFocuses[p]!!)
                     .tvFocus(RoundedCornerShape(12.dp)),
-                icon = { Icon(icon, contentDescription = p.label, modifier = Modifier.size(if (TvCompat.isTv) 24.dp else 20.dp)) },
+                icon = { Icon(icon, contentDescription = p.label, modifier = Modifier.size(if (TvCompat.isTv) 22.dp else 20.dp)) },
                 colors = NavigationBarItemDefaults.colors(
                     selectedIconColor = Mc.red,
                     // 自定义背景下未选中图标实心自适应色，保证可读

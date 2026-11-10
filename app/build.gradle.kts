@@ -17,9 +17,10 @@ android {
         applicationId = "com.anwindmusic"
         minSdk = 24
         targetSdk = 34
+        // v1.4.1：TV 内置选择器焦点修复 + TV 整体 UI 收敛（HD 风格）
         // v1.4.0：安全检测兼容（权限瘦身）+ TV 修复（内置选择器/聚合播放/滑条键控/搜索焦点）
-        versionCode = 12
-        versionName = "1.4.0"
+        versionCode = 13
+        versionName = "1.4.1"
 
         vectorDrawables {
             useSupportLibrary = true

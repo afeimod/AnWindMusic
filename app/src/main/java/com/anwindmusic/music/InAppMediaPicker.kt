@@ -49,6 +49,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -58,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 /**
@@ -108,12 +117,43 @@ fun InAppMediaPicker(
     // 缩略图缓存（滚动不重复解码）
     val thumbCache = remember { LruCache<String, Bitmap>(96) }
 
+    // v1.4.1 TV 焦点修复：选择器出现时主动抢焦点到关闭按钮，并在子树暂无焦点时
+    // 拦截 D-pad 方向/确认键 —— 杜绝遥控穿透到背后的音乐 App（原 bug：
+    // 选择器盖在最上层但焦点仍挂在主界面播放键，按方向/OK 仍操控音乐播放）
+    val closeFocus = remember { FocusRequester() }
+    var rootHasFocus by remember { mutableStateOf(false) }
+    if (TvCompat.isTv) {
+        LaunchedEffect(Unit) {
+            delay(120)
+            runCatching { closeFocus.requestFocus() }
+        }
+    }
+
     BackHandler { onClose() }
 
     // 全屏深色覆盖层（盖在主界面之上，状态栏同色）
     Box(
         Modifier
             .fillMaxSize()
+            .then(
+                if (TvCompat.isTv) Modifier
+                    .onFocusChanged { rootHasFocus = it.hasFocus }
+                    .onPreviewKeyEvent { e ->
+                        // 子树无焦点时（焦点仍在背后主界面）→ 消费方向/确认键并抢回焦点
+                        if (!rootHasFocus && e.type == KeyEventType.KeyDown) {
+                            when (e.key) {
+                                Key.DirectionUp, Key.DirectionDown,
+                                Key.DirectionLeft, Key.DirectionRight,
+                                Key.DirectionCenter, Key.Enter -> {
+                                    runCatching { closeFocus.requestFocus() }
+                                    true
+                                }
+                                else -> false
+                            }
+                        } else false
+                    }
+                else Modifier
+            )
             .background(Color(0xF7141418))
     ) {
         Column(Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 12.dp)) {
@@ -138,7 +178,9 @@ fun InAppMediaPicker(
                 Spacer(Modifier.weight(1f))
                 IconButton(
                     onClick = onClose,
-                    modifier = Modifier.tvFocus(RoundedCornerShape(10.dp), scaleUp = true)
+                    modifier = Modifier
+                        .focusRequester(closeFocus)
+                        .tvFocus(RoundedCornerShape(10.dp), scaleUp = true)
                 ) {
                     Icon(
                         Icons.Filled.Close,
@@ -205,7 +247,8 @@ fun InAppMediaPicker(
                 }
                 // ---- 网格 ----
                 else -> LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = if (TvCompat.isTv) 160.dp else 110.dp),
+                    // v1.4.1：TV 网格缩小到 140dp，提升信息密度（HD 风格，非放大版手机）
+                    columns = GridCells.Adaptive(minSize = if (TvCompat.isTv) 140.dp else 110.dp),
                     modifier = Modifier.fillMaxSize().padding(bottom = 12.dp)
                 ) {
                     items(mediaItems!!, key = { it.id }) { item ->
