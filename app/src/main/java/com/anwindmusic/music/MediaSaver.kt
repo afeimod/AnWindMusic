@@ -133,7 +133,9 @@ object MediaSaver {
         val uri: Uri,
         val name: String,
         /** 视频：时长 ms；图片：0 */
-        val durationMs: Long
+        val durationMs: Long,
+        /** 所属文件夹名（BUCKET_DISPLAY_NAME，如 DCIM/Pictures/Movies；文件管理器分组用） */
+        val bucketName: String = ""
     )
 
     /**
@@ -150,7 +152,8 @@ object MediaSaver {
         val projection = arrayOf(
             MediaStore.MediaColumns._ID,
             MediaStore.MediaColumns.DISPLAY_NAME,
-            MediaStore.MediaColumns.DATE_ADDED
+            MediaStore.MediaColumns.DATE_ADDED,
+            MediaStore.MediaColumns.BUCKET_DISPLAY_NAME
         )
         runCatching {
             context.contentResolver.query(
@@ -163,6 +166,8 @@ object MediaSaver {
                 val idCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
                 val nameCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
                 val durCol = if (video) c.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION) else -1
+                // BUCKET_DISPLAY_NAME 列可能不存在（个别厂商裁剪），用 getColumnIndex 宽容返回 -1
+                val bucketCol = c.getColumnIndex(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
                 while (c.moveToNext() && list.size < limit) {
                     val id = c.getLong(idCol)
                     list.add(
@@ -174,7 +179,8 @@ object MediaSaver {
                                 id.toString()
                             ),
                             name = c.getString(nameCol) ?: "",
-                            durationMs = if (video) c.getLong(durCol) else 0L
+                            durationMs = if (video) c.getLong(durCol) else 0L,
+                            bucketName = if (bucketCol >= 0) c.getString(bucketCol) ?: "" else ""
                         )
                     )
                 }

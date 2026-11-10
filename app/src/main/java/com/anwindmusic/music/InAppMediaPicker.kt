@@ -6,33 +6,34 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.util.LruCache
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.CircularProgressIndicator
@@ -48,43 +49,37 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.focus.FocusDirection
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 /**
- * 内置图片/视频选择器（v1.4 新增，电视实测修复）：
+ * 内置图片/视频选择器（v1.4.3 重写：独立窗口 + 文件夹浏览 + 大图预览）
  *
- * 问题：电视/盒子普遍没有系统文件管理器（DocumentsUI），设置页点
- * 「选择背景图片/视频」时 ACTION_OPEN_DOCUMENT 直接失败，什么都选不了。
+ * v1.4.3 彻底解决 TV 遥控穿透：选择器放在 [Dialog] 独立窗口里 —— Android 窗口
+ * 管理器把输入焦点给到 Dialog 窗口，D-pad 事件物理隔离，不可能穿透到背后的音乐 App。
+ * 不再依赖 Compose 焦点树的抢焦/拦截（v1.4.1/v1.4.2 的 FocusRequester + onPreviewKeyEvent
+ * 方案在部分电视固件上失效，根因是 Compose 按键派发走焦点树、overlay 不自动获焦）。
  *
- * 方案：应用内全屏选择器直接查 MediaStore 图片/视频库，网格缩略图展示，
- * 遥控器四向移动 + OK 选中（复用 tvFocus 焦点高亮体系）；结果复制到
- * 应用私有目录后经 PickBus 回传，与原 SAF 流程完全一致。
- * 手机上系统选择器优先，SAF 拉起失败时也自动回落到这里。
- *
- * 权限：READ_MEDIA_IMAGES / READ_MEDIA_VIDEO（Android 13+）或
- * READ_EXTERNAL_STORAGE（Android 12 及以下），打开时按需申请一次。
+ * 同时升级为文件管理器风格：
+ * - **文件夹芯片**：按 MediaStore BUCKET_DISPLAY_NAME 分组（DCIM / Pictures / Movies /
+ *   Download …），「全部」+ 各文件夹带数量，遥控/点击切换筛选
+ * - **TV 横屏分栏**：左侧缩略图网格（130dp 单元），右侧聚焦项大图预览（512dp 高清缩略图
+ *   + 文件名 + 时长 + 所在文件夹 + 操作提示）
+ * - **手机/竖屏**：单网格（110dp 单元），与原行为一致
+ * - 权限：READ_MEDIA_IMAGES / READ_MEDIA_VIDEO（33+）或 READ_EXTERNAL_STORAGE（≤32）
  */
 @Composable
 fun InAppMediaPicker(
@@ -117,178 +112,196 @@ fun InAppMediaPicker(
         } else null
     }
 
-    // 缩略图缓存（滚动不重复解码）
+    // 缩略图缓存（滚动不重复解码；大图预览用 _lg 后缀 key 避免覆盖小图）
     val thumbCache = remember { LruCache<String, Bitmap>(96) }
+    // 文件夹筛选（null = 全部）
+    var selectedFolder by remember { mutableStateOf<String?>(null) }
+    // 当前聚焦的条目（TV 大图预览同步显示）
+    var focusedItem by remember { mutableStateOf<MediaSaver.MediaItem?>(null) }
 
-    // v1.4.2 TV 焦点彻底修复（上一版 onPreviewKeyEvent 安全网根本不会触发：
-    // Compose 按键派发走焦点树，焦点不在选择器子树内时，选择器的 onPreviewKeyEvent
-    // 永远不调用 → 遥控方向/OK 全派发给背后主界面的播放键）。
-    // 正解：根 Box 自身 focusable + 抢焦重试，焦点进子树后 onPreviewKeyEvent 才会
-    // 生效，再由 focusManager.moveFocus 在子树内寻焦。
-    val rootFocus = remember { FocusRequester() }
-    val closeFocus = remember { FocusRequester() }
-    val focusManager = LocalFocusManager.current
-    // isFocused=true 表示根 Box 自身持焦（非子孙）；用于区分“根持焦跳到关闭键” vs “子孙持焦几何寻焦”
-    var rootSelfFocused by remember { mutableStateOf(false) }
-    if (TvCompat.isTv) {
-        LaunchedEffect(Unit) {
-            // 重试抢焦点：focusable 节点可能在首帧还未就绪，最多重试 10 次
-            repeat(10) {
-                runCatching { rootFocus.requestFocus() }
-                delay(50)
-            }
-        }
+    // 文件夹列表（从媒体条目按 BUCKET_DISPLAY_NAME 聚合，按数量降序）
+    val folders = remember(mediaItems) {
+        mediaItems?.mapNotNull { it.bucketName.ifBlank { null } }
+            ?.groupingBy { it }?.eachCount()
+            ?.toList()?.sortedByDescending { it.second }
+            ?.map { it.first }
+            ?: emptyList()
     }
+    val filtered = if (selectedFolder == null) mediaItems
+                   else mediaItems?.filter { it.bucketName == selectedFolder }
 
-    BackHandler { onClose() }
-
-    // 全屏深色覆盖层（盖在主界面之上，状态栏同色）
-    Box(
-        Modifier
-            .fillMaxSize()
-            .then(
-                if (TvCompat.isTv) Modifier
-                    .focusRequester(rootFocus)
-                    .focusable()
-                    .onFocusChanged { state -> rootSelfFocused = state.isFocused }
-                    .onPreviewKeyEvent { e ->
-                        // 焦点已在选择器子树内（根或子孙），本拦截器一定触发
-                        if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                        when (e.key) {
-                            Key.DirectionDown -> {
-                                if (rootSelfFocused) {
-                                    // 根自身持焦 → moveFocus 从全屏元素不可靠，直接跳关闭键
-                                    runCatching { closeFocus.requestFocus() }
-                                } else {
-                                    focusManager.moveFocus(FocusDirection.Down)
-                                }
-                                true
-                            }
-                            Key.DirectionUp -> {
-                                if (!rootSelfFocused) focusManager.moveFocus(FocusDirection.Up)
-                                true
-                            }
-                            Key.DirectionLeft -> {
-                                if (!rootSelfFocused) focusManager.moveFocus(FocusDirection.Left)
-                                true
-                            }
-                            Key.DirectionRight -> {
-                                if (!rootSelfFocused) focusManager.moveFocus(FocusDirection.Right)
-                                true
-                            }
-                            Key.DirectionCenter, Key.Enter -> {
-                                // 根自身持焦 → 消费（无动作）；子孙持焦 → 放行让 clickable 处理
-                                !rootSelfFocused
-                            }
-                            else -> false
-                        }
-                    }
-                else Modifier
-            )
-            .background(Color(0xF7141418))
+    // v1.4.3 核心：Dialog 独立窗口 —— 焦点物理隔离，D-pad 不可能穿透到背后主界面
+    Dialog(
+        onDismissRequest = onClose,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
+            dismissOnBackPress = true,
+            dismissOnClickOutside = false
+        )
     ) {
-        Column(Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 12.dp)) {
-            // ---- 顶栏：标题 + 关闭 ----
-            Row(
-                Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    if (video) Icons.Filled.Videocam else Icons.Filled.Image,
-                    contentDescription = null,
-                    tint = Mc.red,
-                    modifier = Modifier.size(22.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = if (video) "选择背景视频" else "选择背景图片",
-                    color = Color.White,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(Modifier.weight(1f))
-                IconButton(
-                    onClick = onClose,
-                    modifier = Modifier
-                        .focusRequester(closeFocus)
-                        .tvFocus(RoundedCornerShape(10.dp), scaleUp = true)
+        // 全屏深色覆盖层
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color(0xF7141418))
+        ) {
+            Column(Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 12.dp)) {
+                // ---- 顶栏：标题 + 关闭 ----
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
-                        Icons.Filled.Close,
-                        contentDescription = "关闭",
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp)
+                        if (video) Icons.Filled.Videocam else Icons.Filled.Image,
+                        contentDescription = null,
+                        tint = Mc.red,
+                        modifier = Modifier.size(22.dp)
                     )
-                }
-            }
-
-            when {
-                // ---- 未授权：引导按钮（遥控可聚焦）----
-                !hasPermission -> Column(
-                    Modifier.fillMaxSize().padding(32.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
+                    Spacer(Modifier.width(8.dp))
                     Text(
-                        text = "需要访问${if (video) "视频" else "图片"}权限才能选择背景",
-                        color = Color(0xFFC9C9CF),
-                        fontSize = 14.sp,
-                        textAlign = TextAlign.Center
+                        text = if (video) "选择背景视频" else "选择背景图片",
+                        color = Color.White,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
                     )
-                    Spacer(Modifier.height(16.dp))
-                    Box(
-                        Modifier
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(Mc.red)
-                            .tvFocus(RoundedCornerShape(18.dp), accent = Color.White)
-                            .clickable { runCatching { permLauncher.launch(permission) } }
-                            .padding(horizontal = 28.dp, vertical = 12.dp)
+                    Spacer(Modifier.weight(1f))
+                    IconButton(
+                        onClick = onClose,
+                        modifier = Modifier.tvFocus(RoundedCornerShape(10.dp), scaleUp = true)
                     ) {
-                        Text(
-                            text = "授予权限",
-                            color = Color.White,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = "关闭",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
                         )
                     }
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        text = "拒绝过一次的系统需到系统设置里手动开启",
-                        color = Color(0xFF6C6C7A),
-                        fontSize = 11.sp
-                    )
                 }
-                // ---- 加载中 ----
-                mediaItems == null -> Box(
-                    Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(color = Mc.red, strokeWidth = 3.dp)
+
+                // ---- 文件夹筛选条（文件管理器风格）----
+                if (folders.isNotEmpty()) {
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        item {
+                            FolderChip(
+                                label = "全部 (${mediaItems?.size ?: 0})",
+                                selected = selectedFolder == null,
+                                onClick = { selectedFolder = null }
+                            )
+                        }
+                        items(folders) { folder ->
+                            val count = mediaItems?.count { it.bucketName == folder } ?: 0
+                            FolderChip(
+                                label = "$folder ($count)",
+                                selected = selectedFolder == folder,
+                                onClick = { selectedFolder = folder }
+                            )
+                        }
+                    }
                 }
-                // ---- 无媒体 ----
-                mediaItems!!.isEmpty() -> Box(
-                    Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "设备上没有找到${if (video) "视频" else "图片"}",
-                        color = Color(0xFFC9C9CF),
-                        fontSize = 14.sp
-                    )
-                }
-                // ---- 网格 ----
-                else -> LazyVerticalGrid(
-                    // v1.4.1：TV 网格缩小到 140dp，提升信息密度（HD 风格，非放大版手机）
-                    columns = GridCells.Adaptive(minSize = if (TvCompat.isTv) 140.dp else 110.dp),
-                    modifier = Modifier.fillMaxSize().padding(bottom = 12.dp)
-                ) {
-                    items(mediaItems!!, key = { it.id }) { item ->
-                        MediaCell(
-                            item = item,
-                            video = video,
-                            thumbCache = thumbCache,
-                            onClick = { onPicked(item.uri) }
+
+                // ---- 内容区 ----
+                when {
+                    !hasPermission -> Column(
+                        Modifier.fillMaxSize().padding(32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = "需要访问${if (video) "视频" else "图片"}权限才能选择背景",
+                            color = Color(0xFFC9C9CF),
+                            fontSize = 14.sp,
+                            textAlign = TextAlign.Center
                         )
+                        Spacer(Modifier.height(16.dp))
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(Mc.red)
+                                .tvFocus(RoundedCornerShape(18.dp), accent = Color.White)
+                                .clickable { runCatching { permLauncher.launch(permission) } }
+                                .padding(horizontal = 28.dp, vertical = 12.dp)
+                        ) {
+                            Text(
+                                text = "授予权限",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            text = "拒绝过一次的系统需到系统设置里手动开启",
+                            color = Color(0xFF6C6C7A),
+                            fontSize = 11.sp
+                        )
+                    }
+                    mediaItems == null -> Box(
+                        Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(color = Mc.red, strokeWidth = 3.dp)
+                    }
+                    filtered.isNullOrEmpty() -> Box(
+                        Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (selectedFolder != null)
+                                       "$selectedFolder 中没有${if (video) "视频" else "图片"}"
+                                   else "设备上没有找到${if (video) "视频" else "图片"}",
+                            color = Color(0xFFC9C9CF),
+                            fontSize = 14.sp
+                        )
+                    }
+                    else -> {
+                        // TV 横屏：左网格 + 右大图预览；手机/竖屏：仅网格
+                        if (TvCompat.isTv) {
+                            Row(Modifier.fillMaxSize().padding(bottom = 12.dp)) {
+                                LazyVerticalGrid(
+                                    columns = GridCells.Adaptive(minSize = 130.dp),
+                                    modifier = Modifier.weight(1f).fillMaxHeight()
+                                ) {
+                                    gridItems(filtered, key = { it.id }) { item ->
+                                        MediaCell(
+                                            item = item,
+                                            video = video,
+                                            thumbCache = thumbCache,
+                                            isFocused = focusedItem?.id == item.id,
+                                            onFocusChange = { f -> if (f) focusedItem = item },
+                                            onClick = { onPicked(item.uri) }
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                // 大图预览面板（聚焦项；未聚焦时显示首项）
+                                LargePreview(
+                                    item = focusedItem ?: filtered.first(),
+                                    video = video,
+                                    thumbCache = thumbCache,
+                                    modifier = Modifier.weight(1f).fillMaxHeight()
+                                )
+                            }
+                        } else {
+                            LazyVerticalGrid(
+                                columns = GridCells.Adaptive(minSize = 110.dp),
+                                modifier = Modifier.fillMaxSize().padding(bottom = 12.dp)
+                            ) {
+                                gridItems(filtered, key = { it.id }) { item ->
+                                    MediaCell(
+                                        item = item,
+                                        video = video,
+                                        thumbCache = thumbCache,
+                                        isFocused = false,
+                                        onFocusChange = {},
+                                        onClick = { onPicked(item.uri) }
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -296,12 +309,43 @@ fun InAppMediaPicker(
     }
 }
 
-/** 网格单元：缩略图 + 名称（视频带时长角标）；遥控聚焦红框放大 */
+/** 文件夹芯片（文件管理器风格筛选标签：文件夹图标 + 名称 + 数量） */
+@Composable
+private fun FolderChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (selected) Mc.red else Color(0xFF2A2A33))
+            .tvFocus(RoundedCornerShape(16.dp), accent = Color.White)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Filled.Folder,
+            contentDescription = null,
+            tint = if (selected) Color.White else Color(0xFF9A9AA5),
+            modifier = Modifier.size(14.dp)
+        )
+        Spacer(Modifier.width(5.dp))
+        Text(
+            text = label,
+            color = if (selected) Color.White else Color(0xFFC9C9CF),
+            fontSize = 12.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            maxLines = 1
+        )
+    }
+}
+
+/** 网格单元：缩略图 + 名称（视频带时长角标）；聚焦时上报父级用于大图预览同步 */
 @Composable
 private fun MediaCell(
     item: MediaSaver.MediaItem,
     video: Boolean,
     thumbCache: LruCache<String, Bitmap>,
+    isFocused: Boolean,
+    onFocusChange: (Boolean) -> Unit,
     onClick: () -> Unit
 ) {
     val context = LocalContext.current
@@ -314,6 +358,7 @@ private fun MediaCell(
     }
     Column(
         Modifier
+            .onFocusChanged { state -> onFocusChange(state.isFocused) }
             .padding(5.dp)
             .clip(RoundedCornerShape(10.dp))
             .tvFocus(RoundedCornerShape(10.dp), scaleUp = true)
@@ -351,6 +396,24 @@ private fun MediaCell(
                     )
                 }
             }
+            // 聚焦时叠加选中提示（TV 上更醒目，提示按 OK 选中）
+            if (isFocused) {
+                Box(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Mc.red)
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "OK 选中",
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
         }
         Spacer(Modifier.height(4.dp))
         Text(
@@ -359,6 +422,100 @@ private fun MediaCell(
             fontSize = 10.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+/**
+ * TV 大图预览面板（右侧分栏）：聚焦项的高清缩略图 + 文件名 + 时长 + 所在文件夹 +
+ * 操作提示。缩略图用 512dp（与网格 256dp 缓存 key 加 _lg 后缀隔离，互不覆盖）。
+ */
+@Composable
+private fun LargePreview(
+    item: MediaSaver.MediaItem,
+    video: Boolean,
+    thumbCache: LruCache<String, Bitmap>,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    var largeBmp by remember(item.id) {
+        mutableStateOf<Bitmap?>(thumbCache.get("${item.id}_lg"))
+    }
+    LaunchedEffect(item.id) {
+        largeBmp = withContext(Dispatchers.IO) {
+            MediaSaver.loadMediaThumbnail(context, item, size = 512)
+        }
+        largeBmp?.let { thumbCache.put("${item.id}_lg", it) }
+    }
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(0xFF1A1A22))
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color(0xFF232329)),
+            contentAlignment = Alignment.Center
+        ) {
+            val b = largeBmp
+            if (b != null) {
+                Image(
+                    bitmap = b.asImageBitmap(),
+                    contentDescription = item.name,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                CircularProgressIndicator(color = Mc.red, strokeWidth = 3.dp)
+            }
+            if (video) {
+                Box(
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .background(Color(0x99000000))
+                        .padding(vertical = 6.dp, horizontal = 10.dp)
+                ) {
+                    Text(
+                        text = if (item.durationMs > 0) "视频 · ${fmtTime(item.durationMs)}" else "视频",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = item.name,
+            color = Color.White,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center
+        )
+        if (item.bucketName.isNotBlank()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "📁 ${item.bucketName}",
+                color = Color(0xFF9A9AA5),
+                fontSize = 11.sp
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = "按 OK 键选中 · 按返回键关闭",
+            color = Color(0xFF6C6C7A),
+            fontSize = 10.sp
         )
     }
 }
